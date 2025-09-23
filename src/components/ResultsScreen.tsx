@@ -1,4 +1,4 @@
-import { Trophy, RotateCcw, LogOut, User, Crown, Star } from 'lucide-react';
+import { Trophy, RotateCcw, LogOut, User, Crown, Star, Skull } from 'lucide-react';
 import { GameState, Language, WinnerType } from '../types';
 
 interface ResultsScreenProps {
@@ -283,249 +283,56 @@ export default function ResultsScreen({
         {/* Player Roles */}
         <div className="backdrop-blur-sm rounded-3xl p-6 mb-8 border shadow-2xl" style={{ backgroundColor: 'rgba(168, 85, 247, 0.1)', borderColor: 'rgba(168, 85, 247, 0.3)' }}>
           <h3 className="text-xl font-bold text-white mb-6 text-center">{t.playerRoles}</h3>
-          <div className="grid grid-cols-2 gap-3 max-h-80 overflow-y-auto">
-            {allPlayers.map((player) => (
-              <div key={player.id} className="relative p-4 rounded-2xl border border-white/20 bg-white/10 min-h-[120px] flex flex-col">
-                {/* Avatar */}
-                <div className="relative mx-auto mb-3">
-                  {player.avatar && player.avatar.startsWith('data:') ? (
-                    <div className="w-12 h-12 rounded-full overflow-hidden flex items-center justify-center">
-                      <img 
-                        src={player.avatar} 
-                        alt={`${player.username}'s avatar`}
-                        className="w-full h-full object-cover"
-                      />
-                    </div>
-                  ) : player.avatar ? (
-                    <div className={`w-12 h-12 ${player.avatar} rounded-full flex items-center justify-center`}>
-                      <User className="w-6 h-6 text-white" />
-                    </div>
-                  ) : (
-                    <div className="w-12 h-12 bg-gradient-to-br from-gray-500 to-gray-600 rounded-full flex items-center justify-center">
-                      <User className="w-6 h-6 text-white" />
-                    </div>
-                  )}
-                  {player.isHost && (
-                    <Crown className="w-5 h-5 text-yellow-400 absolute -top-1 -right-1" />
-                  )}
-                </div>
+          <div className="grid grid-cols-2 gap-3">
+            {allPlayers.map((player) => {
+              const isEliminated = gameState.eliminatedPlayers.includes(player.id);
+              return (
+                <div key={player.id} className={`relative p-4 rounded-2xl border bg-white/10 min-h-[120px] flex flex-col transition-all duration-300 ${
+                  isEliminated ? 'border-red-500/30 bg-red-900/20 opacity-70' : 'border-white/20'
+                }`}>
+                  {/* Avatar */}
+                  <div className="relative mx-auto mb-3">
+                    {player.avatar && player.avatar.startsWith('data:') ? (
+                      <div className="w-12 h-12 rounded-full overflow-hidden flex items-center justify-center">
+                        <img 
+                          src={player.avatar} 
+                          alt={`${player.username}'s avatar`}
+                          className={`w-full h-full object-cover ${isEliminated ? 'blur-sm' : ''}`}
+                        />
+                      </div>
+                    ) : player.avatar ? (
+                      <div className={`w-12 h-12 ${player.avatar} rounded-full flex items-center justify-center ${isEliminated ? 'blur-sm' : ''}`}>
+                        <User className="w-6 h-6 text-white" />
+                      </div>
+                    ) : (
+                      <div className={`w-12 h-12 bg-gradient-to-br from-gray-500 to-gray-600 rounded-full flex items-center justify-center ${isEliminated ? 'blur-sm' : ''}`}>
+                        <User className="w-6 h-6 text-white" />
+                      </div>
+                    )}
+                    {player.isHost && !isEliminated && (
+                      <Crown className="w-5 h-5 text-yellow-400 absolute -top-1 -right-1" />
+                    )}
+                    {isEliminated && (
+                      <div className="absolute inset-0 bg-black/60 rounded-full flex items-center justify-center">
+                        <Skull className="w-6 h-6 text-red-500" />
+                      </div>
+                    )}
+                  </div>
 
-                {/* Name and Role */}
-                <div className="text-center flex-grow">
-                  <h3 className="text-sm font-bold text-white mb-2 truncate">
-                    {player.username}
-                  </h3>
-                  <span className={`px-3 py-1 rounded-full text-xs font-medium border ${getRoleColor(playerRoles[player.id])}`}>
-                    {getRoleText(playerRoles[player.id])}
-                  </span>
+                  {/* Name and Role */}
+                  <div className="text-center flex-grow">
+                    <h3 className={`text-sm font-bold text-white mb-2 truncate ${isEliminated ? 'line-through text-gray-400' : ''}`}>
+                      {player.username}
+                    </h3>
+                    <span className={`px-3 py-1 rounded-full text-xs font-medium border ${getRoleColor(playerRoles[player.id])}`}>
+                      {getRoleText(playerRoles[player.id])}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
-
-        {/* Vote Breakdown */}
-        {(gameState.votes && Object.keys(gameState.votes).length > 0) || (gameState.originalVotes && Object.keys(gameState.originalVotes).length > 0) || (gameState.tieBreakerVotes && gameState.tieBreakerVotes.length > 0) ? (
-          <div className="bg-gray-800/50 backdrop-blur-lg rounded-xl p-6 shadow-lg border border-gray-600/50 mb-6">
-            <h3 className="text-2xl font-bold text-white mb-6 text-center">Vote Breakdown</h3>
-            
-            {/* Original Voting Round */}
-            {gameState.originalVotes && Object.keys(gameState.originalVotes).length > 0 && (
-              <div className="mb-8">
-                <h4 className="text-xl font-bold text-white mb-4 text-center border-b border-gray-600/50 pb-2">Original Voting Round</h4>
-                <div className="space-y-3">
-                  {(() => {
-                    // Calculate vote counts for original votes
-                    const voteCounts: Record<string, { count: number; voters: string[] }> = {};
-                    
-                    Object.entries(gameState.originalVotes).forEach(([voterId, votes]) => {
-                      if (Array.isArray(votes)) {
-                        votes.forEach(targetId => {
-                          if (!voteCounts[targetId]) {
-                            voteCounts[targetId] = { count: 0, voters: [] };
-                          }
-                          voteCounts[targetId].count++;
-                          voteCounts[targetId].voters.push(voterId);
-                        });
-                      }
-                    });
-
-                    // Sort by vote count
-                    const sortedVotes = Object.entries(voteCounts)
-                      .map(([targetId, data]) => ({
-                        targetId,
-                        targetName: allPlayers.find(p => p.id === targetId)?.username || 'Unknown Player',
-                        ...data
-                      }))
-                      .sort((a, b) => b.count - a.count);
-
-                    return sortedVotes.map((voteData, index) => {
-                      const targetPlayer = allPlayers.find(p => p.id === voteData.targetId);
-                      const isEliminated = gameState.eliminatedPlayers?.includes(voteData.targetId);
-                      
-                      return (
-                        <div key={voteData.targetId} className={`p-4 rounded-xl border-2 ${
-                          isEliminated 
-                            ? 'bg-red-500/20 border-red-500/50' 
-                            : index === 0 
-                            ? 'bg-yellow-500/20 border-yellow-500/50' 
-                            : 'bg-gray-700/50 border-gray-600/50'
-                        }`}>
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center space-x-3">
-                              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
-                                index === 0 
-                                  ? 'bg-gradient-to-r from-yellow-400 to-orange-500 text-yellow-900' 
-                                  : 'bg-gray-500 text-white'
-                              }`}>
-                                {index + 1}
-                              </div>
-                              {targetPlayer?.avatar && targetPlayer.avatar.startsWith('data:') ? (
-                                <div className="w-8 h-8 rounded-full overflow-hidden flex items-center justify-center">
-                                  <img
-                                    src={targetPlayer.avatar}
-                                    alt={`${voteData.targetName}'s avatar`}
-                                    className="w-full h-full object-cover"
-                                  />
-                                </div>
-                              ) : targetPlayer?.avatar ? (
-                                <div className={`w-8 h-8 ${targetPlayer.avatar} rounded-full flex items-center justify-center`}>
-                                  <User className="w-4 h-4 text-white" />
-                                </div>
-                              ) : (
-                                <div className="w-8 h-8 bg-gray-500 rounded-full flex items-center justify-center">
-                                  <User className="w-4 h-4 text-white" />
-                                </div>
-                              )}
-                              <span className={`font-medium ${isEliminated ? 'line-through text-red-400' : 'text-white'}`}>
-                                {voteData.targetName}
-                              </span>
-                              {isEliminated && (
-                                <span className="text-xs bg-red-500/30 text-red-300 px-2 py-1 rounded-full">
-                                  Eliminated
-                                </span>
-                              )}
-                              {index === 0 && !isEliminated && (
-                                <span className="text-xs bg-yellow-500/30 text-yellow-300 px-2 py-1 rounded-full font-bold">
-                                  Most Votes
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-right">
-                              <div className="text-2xl font-bold text-white">{voteData.count}</div>
-                              <div className="text-xs text-gray-400">votes</div>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    });
-                  })()}
-                </div>
-              </div>
-            )}
-            
-            {/* Tie-Breaker Voting Rounds */}
-            {gameState.tieBreakerVotes && gameState.tieBreakerVotes.length > 0 && (
-              <div className="space-y-6">
-                {gameState.tieBreakerVotes.map((roundVotes, roundIndex) => (
-                  <div key={roundIndex} className="border-t border-gray-600/50 pt-6">
-                    <h4 className="text-xl font-bold text-white mb-4 text-center">
-                      Tie-Breaker Round {roundIndex + 1}
-                    </h4>
-                    <div className="space-y-3">
-                      {(() => {
-                        // Calculate vote counts for this tie-breaker round
-                        const voteCounts: Record<string, { count: number; voters: string[] }> = {};
-                        
-                        Object.entries(roundVotes).forEach(([voterId, votes]) => {
-                          if (Array.isArray(votes)) {
-                            votes.forEach(targetId => {
-                              if (!voteCounts[targetId]) {
-                                voteCounts[targetId] = { count: 0, voters: [] };
-                              }
-                              voteCounts[targetId].count++;
-                              voteCounts[targetId].voters.push(voterId);
-                            });
-                          }
-                        });
-
-                        // Sort by vote count
-                        const sortedVotes = Object.entries(voteCounts)
-                          .map(([targetId, data]) => ({
-                            targetId,
-                            targetName: allPlayers.find(p => p.id === targetId)?.username || 'Unknown Player',
-                            ...data
-                          }))
-                          .sort((a, b) => b.count - a.count);
-
-                        return sortedVotes.map((voteData, index) => {
-                          const targetPlayer = allPlayers.find(p => p.id === voteData.targetId);
-                          const isEliminated = gameState.eliminatedPlayers?.includes(voteData.targetId);
-                          
-                          return (
-                            <div key={voteData.targetId} className={`p-4 rounded-xl border-2 ${
-                              isEliminated 
-                                ? 'bg-red-500/20 border-red-500/50' 
-                                : index === 0 
-                                ? 'bg-orange-500/20 border-orange-500/50' 
-                                : 'bg-gray-700/50 border-gray-600/50'
-                            }`}>
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center space-x-3">
-                                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
-                                    index === 0 
-                                      ? 'bg-gradient-to-r from-orange-400 to-red-500 text-white' 
-                                      : 'bg-gray-500 text-white'
-                                  }`}>
-                                    {index + 1}
-                                  </div>
-                                  {targetPlayer?.avatar && targetPlayer.avatar.startsWith('data:') ? (
-                                    <div className="w-8 h-8 rounded-full overflow-hidden flex items-center justify-center">
-                                      <img
-                                        src={targetPlayer.avatar}
-                                        alt={`${voteData.targetName}'s avatar`}
-                                        className="w-full h-full object-cover"
-                                      />
-                                    </div>
-                                  ) : targetPlayer?.avatar ? (
-                                    <div className={`w-8 h-8 ${targetPlayer.avatar} rounded-full flex items-center justify-center`}>
-                                      <User className="w-4 h-4 text-white" />
-                                    </div>
-                                  ) : (
-                                    <div className="w-8 h-8 bg-gray-500 rounded-full flex items-center justify-center">
-                                      <User className="w-4 h-4 text-white" />
-                                    </div>
-                                  )}
-                                  <span className={`font-medium ${isEliminated ? 'line-through text-red-400' : 'text-white'}`}>
-                                    {voteData.targetName}
-                                  </span>
-                                  {isEliminated && (
-                                    <span className="text-xs bg-red-500/30 text-red-300 px-2 py-1 rounded-full">
-                                      Eliminated
-                                    </span>
-                                  )}
-                                  {index === 0 && !isEliminated && (
-                                    <span className="text-xs bg-orange-500/30 text-orange-300 px-2 py-1 rounded-full font-bold">
-                                      Most Votes
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="text-right">
-                                  <div className="text-2xl font-bold text-white">{voteData.count}</div>
-                                  <div className="text-xs text-gray-400">votes</div>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        });
-                      })()}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        ) : null}
 
         {/* Action Buttons */}
         <div className="space-y-4">

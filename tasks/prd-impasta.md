@@ -104,17 +104,20 @@
 ### Voting System
 41. The system must display "Vote for Impastas" header with player cards and checkboxes
 42. The system must enforce exact voting requirements (1 vote for 1 impostor mode, 2 for 2 impostor mode, etc.)
-43. The system must handle ties by requiring revotes among tied players only (tied players can only vote for other tied players)
-44. The system must provide "Continue Game" and "Finish Game" buttons on vote results screen for hosts
-45. The system must support multiple elimination rounds in Randomize mode (one impostor eliminated per round)
-46. The system must remove the 10-second timer from vote results screen
-47. The system must prevent players from voting for themselves
-48. The system must show vote results including who voted for whom and who got eliminated
-49. The system must allow the host to skip the voting screen and go directly to vote results
-50. The system must show live vote updates to the host during the voting phase
-51. The system must display vote rankings (most votes, least votes, ties) on the vote results screen
-52. The system must automatically submit votes for bots after a 2-second delay
-53. The system must force submit remaining votes when the timer expires
+43. In Randomize mode, the system must limit players to voting for exactly one player per round.
+44. The system must handle ties by requiring revotes among tied players only. In Randomize mode, this applies to ties for the most votes.
+45. On the vote results screen in Randomize mode, the system must show "Continue Game" and "Finish Game" buttons to the host only. Other players will see a "Waiting for host..." message.
+46. The system must support multiple elimination rounds in Randomize mode, with exactly one player (the one with the most votes) eliminated per round.
+47. If the host chooses "Continue Game" in Randomize mode, the system must start a new round by returning to the answer display screen.
+48. The system must change the role of an eliminated player to a non-controlling 'spectator' and visually blur their card on the answer and voting screens for all players in subsequent rounds.
+49. The system must remove the 10-second timer from vote results screen
+50. The system must prevent players from voting for themselves
+51. The system must show vote results including who voted for whom and who got eliminated
+52. The system must allow the host to skip the voting screen and go directly to vote results
+53. The system must show live vote updates to the host during the voting phase
+54. The system must display vote rankings (most votes, least votes, ties) on the vote results screen
+55. The system must automatically submit votes for bots after a 2-second delay
+56. The system must force submit remaining votes when the timer expires
 
 ### Tie-Breaking System
 54. The system must detect ties when players outside the top N positions have the same vote count as the Nth elimination position (where N = impostor count)

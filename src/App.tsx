@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Player, GameState, GameMode, WordPack, GamePack, PlayerRole, WinnerType } from './types';
-import { assignRoles, generateRoomCode } from './utils/gameUtils';
+import { assignRoles, generateRoomCode, getRandomImpostorCount } from './utils/gameUtils';
 import { createBot, generateBotAnswer, generateBotVotes } from './utils/botUtils';
 import { getRandomQuestion, getRandomImpostorQuestion, getRandomWord, determineWinner, generateJesterClues } from './utils/gameLogic';
 import CustomQuestionCreationScreen from './components/CustomQuestionCreationScreen';
@@ -16,6 +16,68 @@ const processVotingResults = (
   setCurrentScreen: (screen: string) => void,
   determineWinner: (gameState: GameState, players: Player[], eliminatedPlayers: string[]) => { winners: Player[]; winnerType?: WinnerType }
 ) => {
+
+  // --- NEW: TIE-BREAKER RESULT LOGIC FOR NORMAL MODE ---
+  if (gameState.isTieVote && !gameState.isRandomizeMode) {
+    console.log('Processing tie-breaker results for normal mode...');
+    
+    const tiedPlayerIds = new Set(gameState.tiedPlayers);
+    const tieBreakerVoteCounts: { [key: string]: number } = {};
+    
+    // Initialize tied players with 0 votes
+    gameState.tiedPlayers?.forEach(pId => tieBreakerVoteCounts[pId] = 0);
+
+    // Count votes for only the tied players
+    Object.values(allVotes).flat().forEach(targetId => {
+      if (tiedPlayerIds.has(targetId)) {
+        tieBreakerVoteCounts[targetId]++;
+      }
+    });
+
+    const sortedTiedPlayers = Object.entries(tieBreakerVoteCounts).sort(([, a], [, b]) => b - a);
+    
+    const alreadyEliminatedCount = gameState.eliminatedPlayers.length;
+    const totalNeeded = gameState.impostorCount;
+    const remainingToEliminate = totalNeeded - alreadyEliminatedCount;
+
+    const highestVoteCount = sortedTiedPlayers.length > 0 ? sortedTiedPlayers[0][1] : 0;
+    const playersWithHighestVotes = sortedTiedPlayers.filter(([, votes]) => votes === highestVoteCount);
+
+    if (playersWithHighestVotes.length > remainingToEliminate && highestVoteCount > 0) {
+      console.log('Another tie detected in tie-breaker round.');
+      setGameState(prev => ({
+        ...prev,
+        isTieVote: true,
+        tiedPlayers: playersWithHighestVotes.map(([id]) => id),
+        votes: {}, // Clear votes for the next round
+        tieBreakerVotes: [...(prev.tieBreakerVotes || []), allVotes],
+      }));
+      setCurrentScreen('voting');
+      return;
+    }
+
+    const playersToEliminate = sortedTiedPlayers.slice(0, remainingToEliminate).map(([id]) => id);
+    const newEliminatedPlayers = [...gameState.eliminatedPlayers, ...playersToEliminate];
+    const { winners, winnerType } = determineWinner(gameState, gameState.players, newEliminatedPlayers);
+
+    setGameState(prev => ({
+      ...prev,
+      phase: 'voteResults',
+      eliminatedPlayers: newEliminatedPlayers,
+      // previousEliminatedPlayers is already correctly set from when the tie was initiated
+      votes: {},
+      tieBreakerVotes: [...(prev.tieBreakerVotes || []), allVotes],
+      winners,
+      winnerType,
+      isTieVote: false,
+      tiedPlayers: [],
+    }));
+    setCurrentScreen('voteResults');
+    return;
+  }
+  // --- END NEW LOGIC ---
+
+
   // Calculate vote counts - include ALL players, even those with 0 votes
   const voteCounts: { [key: string]: number } = {};
   
@@ -60,8 +122,63 @@ const processVotingResults = (
     return;
   }
 
+  if (gameState.isRandomizeMode) {
+    const wasTieBreakerRound = gameState.isTieVote;
+
+    const highestVoteCount = sortedPlayers.length > 0 ? sortedPlayers[0][1] : 0;
+    const playersWithHighestVotes = sortedPlayers.filter(([, votes]) => votes === highestVoteCount);
+
+    if (playersWithHighestVotes.length > 1 && highestVoteCount > 0) {
+      // STILL A TIE, or a new tie.
+      setGameState(prev => {
+        // If the round we just processed was a tie-breaker, its votes need to be stored.
+        const newTieBreakerLog = wasTieBreakerRound ? [...(prev.tieBreakerVotes || []), { ...allVotes }] : prev.tieBreakerVotes;
+        
+        return {
+          ...prev,
+          phase: 'voting',
+          isTieVote: true, // Set/keep as true for the next round
+          tiedPlayers: playersWithHighestVotes.map(([playerId]) => playerId),
+          votes: {}, // Clear for next round
+          originalVotes: prev.originalVotes || { ...allVotes }, // Capture original votes on first tie
+          tieBreakerVotes: newTieBreakerLog, // Update the log
+        }
+      });
+      setCurrentScreen('voting');
+    } else {
+      // TIE RESOLVED or no tie in the first place.
+      const eliminatedPlayerIds = highestVoteCount > 0 ? [playersWithHighestVotes[0][0]] : [];
+      setGameState(prev => {
+        const newEliminatedPlayers = [...prev.eliminatedPlayers, ...eliminatedPlayerIds];
+        const updatedPlayers = prev.players.map(p => ({ ...p, isEliminated: newEliminatedPlayers.includes(p.id) }));
+
+        // If the round we just processed was a tie-breaker, its votes need to be stored.
+        const newTieBreakerLog = wasTieBreakerRound ? [...(prev.tieBreakerVotes || []), { ...allVotes }] : prev.tieBreakerVotes;
+
+        return {
+          ...prev,
+          phase: 'voteResults',
+          votes: allVotes,
+          players: updatedPlayers,
+          eliminatedPlayers: newEliminatedPlayers,
+          previousEliminatedPlayers: prev.eliminatedPlayers,
+          
+          isTieVote: false, // Tie is resolved
+          tiedPlayers: [],
+          tieBreakerVotes: newTieBreakerLog,
+          originalVotes: prev.originalVotes || allVotes,
+        }
+      });
+      setCurrentScreen('voteResults');
+    }
+    return;
+  }
+  
   // Get the vote count of the N-th player (where N = impostor count)
-  const nthPlayerVotes = sortedPlayers[impostorCount - 1][1];
+  let nthPlayerVotes = -1;
+  if (sortedPlayers.length > 0) {
+    nthPlayerVotes = sortedPlayers[impostorCount - 1] ? sortedPlayers[impostorCount - 1][1] : -1;
+  }
   
   console.log('TIE DETECTION:', {
     impostorCount,
@@ -155,47 +272,58 @@ const processVotingResults = (
       isTieVote: true,
       tiedPlayers: playersWithNthVotes.map(([playerId]) => playerId),
       votes: {}, // Clear all votes for tie-breaker round
-      originalVotes: originalVotes // Store original votes
+      originalVotes: originalVotes, // Store original votes
+      previousEliminatedPlayers: gameState.eliminatedPlayers, // Capture state before ANY eliminations this round
     });
     setCurrentScreen('voting');
   } else {
     // No tie, eliminate top N players directly
-    const eliminatedPlayers = sortedPlayers.slice(0, impostorCount).map(([playerId]) => playerId);
+    const eliminatedPlayerIds = sortedPlayers.slice(0, impostorCount).map(([playerId]) => playerId);
     
-    console.log('NO TIE - eliminating top N players:', eliminatedPlayers);
+    console.log('NO TIE - eliminating top N players:', eliminatedPlayerIds);
     
-    const { winners, winnerType } = determineWinner(gameState, gameState.players, eliminatedPlayers);
+    const { winners, winnerType } = determineWinner(gameState, gameState.players, eliminatedPlayerIds);
     
     // Check if game has ended
     if (winnerType) {
       console.log('Game ended! Winner type:', winnerType, winners.length > 0 ? `Winners: ${winners.map(w => w.username)}` : 'No winners (tie)');
       
-      setGameState({
-        ...gameState,
-        phase: 'results',
-        votes: allVotes,
-        originalVotes: allVotes, // Store original votes for vote breakdown
-        eliminatedPlayers: [...gameState.eliminatedPlayers, ...eliminatedPlayers],
-        winners,
-        winnerType: winnerType || undefined,
-        isTieVote: false,
-        tiedPlayers: []
+      setGameState(prev => {
+        const newEliminatedPlayers = [...prev.eliminatedPlayers, ...eliminatedPlayerIds];
+        
+        return {
+          ...prev,
+          phase: 'voteResults', // <-- CHANGE HERE
+          votes: allVotes,
+          originalVotes: allVotes, // Store original votes for vote breakdown
+          eliminatedPlayers: newEliminatedPlayers,
+          previousEliminatedPlayers: prev.eliminatedPlayers, // For highlighting this round's eliminated
+          winners,
+          winnerType: winnerType || undefined,
+          isTieVote: false,
+          tiedPlayers: []
+        };
       });
-      setCurrentScreen('results');
+      setCurrentScreen('voteResults'); // <-- CHANGE HERE
       return;
     }
 
     // Game continues - show vote results
-    setGameState({
-      ...gameState,
-      phase: 'voteResults',
-      votes: allVotes,
-      originalVotes: allVotes, // Store original votes for vote breakdown
-      eliminatedPlayers: [...gameState.eliminatedPlayers, ...eliminatedPlayers],
-      winners,
-      winnerType,
-      isTieVote: false,
-      tiedPlayers: []
+    setGameState(prev => {
+      const newEliminatedPlayers = [...prev.eliminatedPlayers, ...eliminatedPlayerIds];
+
+      return {
+        ...prev,
+        phase: 'voteResults',
+        votes: allVotes,
+        originalVotes: allVotes, // Store original votes for vote breakdown
+        eliminatedPlayers: newEliminatedPlayers,
+        winners,
+        winnerType,
+        isTieVote: false,
+        tiedPlayers: [],
+        previousEliminatedPlayers: prev.eliminatedPlayers,
+      };
     });
     setCurrentScreen('voteResults');
   }
@@ -544,8 +672,17 @@ function App() {
     // Mark that we've played at least once
     setHasPlayedOnce(true);
     
+    const playingPlayers = gameState.selectedPackType === 'custom' 
+    ? gameState.players.filter(p => p.role !== 'spectator')
+    : gameState.players;
+
+    let finalImpostorCount = gameState.impostorCount;
+    if (gameState.isRandomizeMode) {
+      const randomCount = getRandomImpostorCount(playingPlayers.length);
+      finalImpostorCount = Math.min(randomCount, 3);
+    }
     // Assign roles
-    const roleAssignments = assignRoles(gameState.players, gameState.impostorCount, gameState.hasJester);
+    const roleAssignments = assignRoles(gameState.players, finalImpostorCount, gameState.hasJester);
     
     // Generate content based on selected pack
     let question = '';
@@ -583,7 +720,7 @@ function App() {
     console.log('ROLE ASSIGNMENT DEBUG:', {
       allPlayers: gameState.players.map(p => ({ id: p.id, username: p.username, role: p.role, isBot: p.isBot })),
       roleAssignments: roleAssignments,
-      impostorCount: gameState.impostorCount
+      impostorCount: finalImpostorCount
     });
     
     // Apply roles to ALL players (assignRoles returns roles for all players)
@@ -598,6 +735,7 @@ function App() {
         setGameState(prev => ({
           ...prev,
       phase: 'questions',
+      impostorCount: finalImpostorCount,
       currentQuestion: question,
       currentImpostorQuestion: impostorQuestion,
       currentWord: word,
@@ -737,7 +875,7 @@ function App() {
     nonEliminatedPlayers.forEach(player => {
       if (player.isBot && !gameState.votes[player.id] && 
           (gameState.selectedPackType !== 'custom' || player.role !== 'spectator')) {
-        const votesNeeded = gameState.isTieVote ? 1 : (gameState.impostorCount - gameState.eliminatedPlayers.length);
+        const votesNeeded = gameState.isRandomizeMode || gameState.isTieVote ? 1 : (gameState.impostorCount - gameState.eliminatedPlayers.length);
         const tiedPlayers = gameState.isTieVote ? gameState.tiedPlayers : undefined;
         
         const votes = generateBotVotes(
@@ -758,7 +896,7 @@ function App() {
             ...prev,
       votes: { ...prev.votes, ...botVotes }
     }));
-  }, [gameState.players, gameState.votes, gameState.isTieVote, gameState.tiedPlayers, gameState.impostorCount, gameState.eliminatedPlayers]);
+  }, [gameState.players, gameState.votes, gameState.isTieVote, gameState.tiedPlayers, gameState.impostorCount, gameState.eliminatedPlayers, gameState.isRandomizeMode]);
 
   const handleSubmitVotes = () => {
       const currentPlayer = gameState.players.find(p => p.username === username);
@@ -771,7 +909,7 @@ function App() {
     nonEliminatedPlayers.forEach(player => {
       if (player.isBot && !gameState.votes[player.id] && 
           (gameState.selectedPackType !== 'custom' || player.role !== 'spectator')) {
-          const votesNeeded = gameState.isTieVote ? 1 : (gameState.impostorCount - gameState.eliminatedPlayers.length);
+          const votesNeeded = gameState.isRandomizeMode || gameState.isTieVote ? 1 : (gameState.impostorCount - gameState.eliminatedPlayers.length);
           const tiedPlayers = gameState.isTieVote ? gameState.tiedPlayers : undefined;
         
         const votes = generateBotVotes(
@@ -810,127 +948,35 @@ function App() {
       }
       
     // Process voting results
-    if (gameState.isTieVote) {
-      // Handle tie-breaker voting results
-      console.log('Processing tie-breaker voting results...');
-      
-      // Calculate vote counts for tied players only
-      const tieVoteCounts: { [key: string]: number } = {};
-      Object.entries(allVotes).forEach(([, playerVotes]) => {
-        playerVotes.forEach(targetId => {
-          if (gameState.tiedPlayers?.includes(targetId)) {
-            tieVoteCounts[targetId] = (tieVoteCounts[targetId] || 0) + 1;
-          }
-        });
-      });
-      
-      console.log('Tie-breaker vote counts:', tieVoteCounts);
-
-      // Sort tied players by vote count (highest first)
-      const sortedTiePlayers = Object.entries(tieVoteCounts)
-      .sort(([, a], [, b]) => b - a);
-    
-      console.log('Sorted tie-breaker players:', sortedTiePlayers.map(([id, votes]) => ({ id, votes })));
-      
-      // Check if there's still a tie after tie-breaker
-      const highestVotes = sortedTiePlayers[0]?.[1] || 0;
-      const tiedPlayersAfterBreak = sortedTiePlayers.filter(([, votes]) => votes === highestVotes);
-      
-      console.log('Highest votes in tie-breaker:', highestVotes);
-      console.log('Players tied after tie-breaker:', tiedPlayersAfterBreak.map(([id, votes]) => ({ id, votes })));
-      
-      if (tiedPlayersAfterBreak.length > 1) {
-        // Still a tie! Continue with another tie-breaker round
-        console.log('STILL A TIE! Starting another tie-breaker round...');
-        
-        // Store tie-breaker votes before continuing
-        const currentTieBreakerVotes = { ...allVotes };
-        
-        // Add to existing tie-breaker rounds or create new array
-        const existingTieBreakerRounds = gameState.tieBreakerVotes || [];
-        const updatedTieBreakerRounds = [...existingTieBreakerRounds, currentTieBreakerVotes];
-        
-        // Don't eliminate anyone yet - continue tie-breaker with the still-tied players
-        setGameState({
-          ...gameState,
-          votes: {}, // Clear votes for new tie-breaker round
-          isTieVote: true,
-          tiedPlayers: tiedPlayersAfterBreak.map(([playerId]) => playerId),
-          tieBreakerVotes: updatedTieBreakerRounds // Store all tie-breaker rounds
-        });
-        setCurrentScreen('voting');
-        return;
-      } else {
-        // No more tie! Eliminate the player with highest votes
-        const eliminatedPlayer = sortedTiePlayers[0][0];
-        console.log('No more tie - eliminating:', eliminatedPlayer);
-        
-        // Calculate how many players we need to eliminate total (N-M)
-        const remainingToEliminate = gameState.impostorCount - gameState.eliminatedPlayers.length;
-        
-        console.log('Need to eliminate players in tie-breaker:', remainingToEliminate, 'from tied players:', gameState.tiedPlayers?.length);
-        
-        // Eliminate the top (N-M) players from the tie-breaker results
-        const playersToEliminate = sortedTiePlayers.slice(0, remainingToEliminate).map(([playerId]) => playerId);
-        
-        console.log('Players eliminated in tie-breaker:', playersToEliminate);
-        
-        // Add all eliminated players to the list
-        const allEliminatedPlayers = [...gameState.eliminatedPlayers, ...playersToEliminate];
-        
-        console.log('Total eliminated after tie-breaker:', allEliminatedPlayers.length, 'Target:', gameState.impostorCount);
-        
-        // Store final tie-breaker votes
-        const finalTieBreakerVotes = { ...allVotes };
-        
-        // Add final tie-breaker round to existing rounds
-        const existingTieBreakerRounds = gameState.tieBreakerVotes || [];
-        const allTieBreakerRounds = [...existingTieBreakerRounds, finalTieBreakerVotes];
-      
-      // Check if game has ended
-        const { winners, winnerType } = determineWinner(gameState, gameState.players, allEliminatedPlayers);
-        
-        if (winnerType) {
-          console.log('Game ended after tie-breaker! Winner type:', winnerType);
-        setGameState({
-          ...gameState,
-          phase: 'results',
-          votes: allVotes,
-          originalVotes: gameState.originalVotes, // Preserve original votes
-          tieBreakerVotes: allTieBreakerRounds,
-          eliminatedPlayers: allEliminatedPlayers,
-          winners,
-          winnerType: winnerType || undefined,
-          isTieVote: false,
-          tiedPlayers: []
-        });
-        setCurrentScreen('results');
-        return;
-      }
-
-        // Game continues
-      setGameState({
-        ...gameState,
-        phase: 'voteResults',
-        votes: allVotes,
-        originalVotes: gameState.originalVotes, // Preserve original votes
-        tieBreakerVotes: allTieBreakerRounds,
-        eliminatedPlayers: allEliminatedPlayers,
-        winners,
-        winnerType,
-        isTieVote: false,
-        tiedPlayers: []
-      });
-      setCurrentScreen('voteResults');
-      }
-    } else {
-      // Normal voting results
-      processVotingResults(allVotes, gameState, setGameState, (screen: string) => setCurrentScreen(screen as Screen), determineWinner);
-    }
+    processVotingResults(allVotes, gameState, setGameState, (screen: string) => setCurrentScreen(screen as Screen), determineWinner);
   };
 
   const handleStartTieBreaker = () => {
     setCurrentScreen('voting');
+  };
+
+  const handleContinueRandomize = () => {
+    setGameState(prev => ({
+      ...prev,
+      phase: 'questions', // Reset to discussion phase
+      votes: {}, // Clear votes for the new round
+      isTieVote: false,
+      tiedPlayers: [],
+      originalVotes: undefined, // Clear vote history for the new round
+      tieBreakerVotes: undefined,
+    }));
+    setCurrentScreen('answers');
+  };
+
+  const handleFinishRandomize = () => {
+    const { winners, winnerType } = determineWinner(gameState, gameState.players, gameState.eliminatedPlayers);
+    setGameState(prev => ({
+      ...prev,
+      phase: 'results',
+      winners,
+      winnerType
+    }));
+    setCurrentScreen('results');
   };
 
   const handlePlayAgain = () => {
@@ -973,30 +1019,36 @@ function App() {
     }
       
     // For regular packs, go back to lobby with same pack and reset settings
-    setGameState(prev => ({
-      ...prev,
-      phase: 'lobby',
-      currentRound: 1,
-      eliminatedPlayers: [],
-      winners: [],
-      winnerType: undefined,
-      playerAnswers: {},
-      submittedAnswers: {},
-      votes: {},
-      originalVotes: undefined, // Clear previous game's original votes
-      tieBreakerVotes: undefined, // Clear previous game's tie-breaker votes
-      playerRoles: {},
-      jesterCluePlayers: [],
-      isTieVote: false,
-      tiedPlayers: [],
-      gameEndReason: undefined,
-      currentVoteResult: undefined,
-      // Reset game settings to defaults
-      impostorCount: 1,
-      hasJester: false,
-      isRandomizeMode: false,
-      currentImpostorWord: '' // Clear previous game's custom word
-    }));
+    setGameState(prev => {
+      // Reset isEliminated status for all players
+      const resetPlayers = prev.players.map(p => ({ ...p, isEliminated: false }));
+
+      return {
+        ...prev,
+        players: resetPlayers,
+        phase: 'lobby',
+        currentRound: 1,
+        eliminatedPlayers: [],
+        winners: [],
+        winnerType: undefined,
+        playerAnswers: {},
+        submittedAnswers: {},
+        votes: {},
+        originalVotes: undefined, // Clear previous game's original votes
+        tieBreakerVotes: undefined, // Clear previous game's tie-breaker votes
+        playerRoles: {},
+        jesterCluePlayers: [],
+        isTieVote: false,
+        tiedPlayers: [],
+        gameEndReason: undefined,
+        currentVoteResult: undefined,
+        // Reset game settings to defaults
+        impostorCount: 1,
+        hasJester: false,
+        isRandomizeMode: false,
+        currentImpostorWord: '' // Clear previous game's custom word
+      };
+    });
     setCurrentScreen('lobby');
   };
 
@@ -1064,9 +1116,10 @@ function App() {
   useEffect(() => {
     if ((currentScreen === 'voting' && gameState.phase === 'voting') || 
         (currentScreen === 'answers' && gameState.phase === 'voting')) {
-      // Check if all non-spectator players have voted
-      const allPlayers = gameState.players.filter(p => !p.isEliminated);
-      const nonSpectatorPlayers = allPlayers.filter(p => 
+      // Check if all non-spectator, non-eliminated players have voted
+      const allPlayers = gameState.players;
+      const activePlayers = allPlayers.filter(p => !p.isEliminated);
+      const nonSpectatorPlayers = activePlayers.filter(p => 
         gameState.selectedPackType !== 'custom' || p.role !== 'spectator'
       );
       const playersWhoVoted = Object.keys(gameState.votes);
@@ -1077,6 +1130,7 @@ function App() {
       
       console.log('VOTE CHECK:', {
         totalPlayers: allPlayers.length,
+        activePlayers: activePlayers.length,
         nonSpectatorPlayers: nonSpectatorPlayers.length,
         playersWhoVoted: playersWhoVoted.length,
         allNonSpectatorPlayersHaveVoted,
@@ -1430,6 +1484,8 @@ function App() {
             onStartTieBreaker={handleStartTieBreaker}
             onContinueGame={() => setCurrentScreen('questions')}
             onFinishGame={() => setCurrentScreen('results')}
+            onContinueRandomize={handleContinueRandomize}
+            onFinishRandomize={handleFinishRandomize}
             language="en"
           />
         );

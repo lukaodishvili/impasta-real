@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { GameState } from '../types';
-import { Clock, MessageCircle, Vote, User } from 'lucide-react';
+import { Clock, MessageCircle, Vote, User, Users } from 'lucide-react';
 import { generateBotVotes } from '../utils/botUtils';
 
 interface AnswerDisplayScreenProps {
@@ -27,6 +27,8 @@ const AnswerDisplayScreen: React.FC<AnswerDisplayScreenProps> = ({
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const currentPlayer = gameState.players.find(p => p.username === currentUsername);
+
   // Timer countdown
   useEffect(() => {
     if (!isTimerRunning || timeLeft <= 0) return;
@@ -46,13 +48,22 @@ const AnswerDisplayScreen: React.FC<AnswerDisplayScreenProps> = ({
 
 
   // Calculate votes needed
-  const votesNeeded = gameState.impostorCount - gameState.eliminatedPlayers.length;
+  const votesNeeded = gameState.isRandomizeMode || gameState.isTieVote ? 1 : gameState.impostorCount - gameState.eliminatedPlayers.length;
 
   // Get eligible players (non-eliminated, non-spectator)
-  const eligiblePlayers = gameState.players.filter(p => 
-    !gameState.eliminatedPlayers.includes(p.id) && 
-    (gameState.selectedPackType !== 'custom' || p.role !== 'spectator')
-  );
+  const eligiblePlayers = useMemo(() => {
+    const activePlayers = gameState.players.filter(p => 
+      !gameState.eliminatedPlayers.includes(p.id) && 
+      (gameState.selectedPackType !== 'custom' || p.role !== 'spectator')
+    );
+
+    if (gameState.isTieVote && gameState.tiedPlayers && gameState.tiedPlayers.length > 0) {
+      const tiedPlayerIds = new Set(gameState.tiedPlayers);
+      return activePlayers.filter(p => tiedPlayerIds.has(p.id));
+    }
+
+    return activePlayers;
+  }, [gameState.players, gameState.eliminatedPlayers, gameState.selectedPackType, gameState.isTieVote, gameState.tiedPlayers]);
 
   // Handle vote toggle
   const handleVoteToggle = (playerId: string) => {
@@ -65,6 +76,8 @@ const AnswerDisplayScreen: React.FC<AnswerDisplayScreenProps> = ({
     setSelectedVotes(prev => {
       if (prev.includes(playerId)) {
         return prev.filter(id => id !== playerId);
+      } else if (gameState.isRandomizeMode || gameState.isTieVote) {
+        return [playerId]; // Only allow one selection
       } else if (prev.length < votesNeeded) {
         return [...prev, playerId];
       }
@@ -78,9 +91,14 @@ const AnswerDisplayScreen: React.FC<AnswerDisplayScreenProps> = ({
     if (submitted) return;
     
     // Prevent spectators from submitting votes in custom packs
-    if (gameState.selectedPackType === 'custom' && isSpectator) return;
+    if (gameState.selectedPackType === 'custom' && currentPlayer?.role === 'spectator') return;
     
-    if (selectedVotes.length !== votesNeeded) {
+    if (gameState.isRandomizeMode || gameState.isTieVote) {
+      if (selectedVotes.length !== 1) {
+        setError(`Please select exactly 1 player to vote for.`);
+        return;
+      }
+    } else if (selectedVotes.length !== votesNeeded) {
       setError(`Please select exactly ${votesNeeded} player${votesNeeded > 1 ? 's' : ''} to vote for.`);
       return;
     }
@@ -102,28 +120,22 @@ const AnswerDisplayScreen: React.FC<AnswerDisplayScreenProps> = ({
   useEffect(() => {
     if (!votingStarted) return;
 
-    console.log('AnswerDisplayScreen - Voting started, checking for bots to vote...');
-    
-    const players = gameState.players;
+    const activePlayers = gameState.players.filter(p => !p.isEliminated);
+
     // Only vote for bots that haven't voted yet
-    const bots = players.filter(player => 
+    const bots = activePlayers.filter(player => 
       (player.isBot || player.username.startsWith('Bot_')) && 
       !gameState.votes[player.id] &&
       (gameState.selectedPackType !== 'custom' || player.role !== 'spectator')
     );
     
-    console.log('AnswerDisplayScreen - All players:', players.map(p => ({ username: p.username, isBot: p.isBot, hasVoted: !!gameState.votes[p.id], role: p.role })));
-    console.log('AnswerDisplayScreen - Eligible bots to vote:', bots.map(b => b.username));
-    
     if (bots.length === 0) return;
-
-    console.log('AnswerDisplayScreen - Bot voting for:', bots.map(b => b.username));
 
     // Generate all bot votes immediately - no delays
     bots.forEach((bot) => {
       const botVotes = generateBotVotes(
         bot.id,
-        players,
+        activePlayers,
         votesNeeded,
         bot.personality || 'random',
         gameState.isTieVote ? gameState.tiedPlayers : undefined
@@ -140,9 +152,10 @@ const AnswerDisplayScreen: React.FC<AnswerDisplayScreenProps> = ({
 
     // Force bot voting timeout - ensure all bots vote within 3 seconds
     const timeout = setTimeout(() => {
-      const remainingBots = players.filter(player => 
+      const remainingBots = activePlayers.filter(player => 
         (player.isBot || player.username.startsWith('Bot_')) && 
         !gameState.votes[player.id] &&
+        !player.isEliminated && // This check is redundant now but safe
         (gameState.selectedPackType !== 'custom' || player.role !== 'spectator')
       );
       
@@ -152,7 +165,7 @@ const AnswerDisplayScreen: React.FC<AnswerDisplayScreenProps> = ({
         remainingBots.forEach((bot) => {
           const botVotes = generateBotVotes(
             bot.id,
-            players,
+            activePlayers,
             votesNeeded,
             'random', // Force random voting on timeout
             gameState.isTieVote ? gameState.tiedPlayers : undefined
@@ -169,14 +182,13 @@ const AnswerDisplayScreen: React.FC<AnswerDisplayScreenProps> = ({
     }, 3000); // 3 seconds timeout
 
     return () => clearTimeout(timeout);
-  }, [votingStarted, votesNeeded, gameState.isTieVote, gameState.tiedPlayers, gameState.players.length, gameState.votes, gameState.selectedPackType]);
+  }, [votingStarted, votesNeeded, gameState.isTieVote, gameState.tiedPlayers, gameState.players, gameState.votes, gameState.selectedPackType, setGameState]);
 
 
   const getPlayerAnswer = (playerId: string) => {
     return gameState.playerAnswers?.[playerId] || '';
   };
 
-  const currentPlayer = gameState.players.find(p => p.username === currentUsername);
   const isHost = currentPlayer?.isHost;
   const isSpectator = currentPlayer?.role === 'spectator';
 
@@ -244,6 +256,18 @@ const AnswerDisplayScreen: React.FC<AnswerDisplayScreenProps> = ({
             </span>
           </h1>
           <p className="text-lg" style={{ color: '#D1D5DB' }}>{t.title}</p>
+          {!gameState.isRandomizeMode && (
+            <div className="mt-6 backdrop-blur-sm rounded-2xl p-4 border shadow-lg inline-block" style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', borderColor: 'rgba(239, 68, 68, 0.3)' }}>
+              <div className="flex items-center justify-center space-x-3">
+                <div className="p-3 rounded-full bg-red-500/20">
+                  <Users className="w-6 h-6 text-red-400" />
+                </div>
+                <span className="font-mono text-2xl font-bold text-white">
+                  Impostors: {gameState.impostorCount}
+                </span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Question Display - Only show for question mode */}
@@ -279,7 +303,10 @@ const AnswerDisplayScreen: React.FC<AnswerDisplayScreenProps> = ({
             <div className="space-y-4">
               <h2 className="text-xl font-bold text-white">Voting Phase</h2>
               <p className="text-gray-300 text-lg">
-                Select {votesNeeded} impostor{votesNeeded > 1 ? 's' : ''} to vote for.
+                {gameState.isRandomizeMode || gameState.isTieVote
+                  ? 'Vote for an impostor.'
+                  : `Select ${votesNeeded} impostor${votesNeeded > 1 ? 's' : ''} to vote for.`
+                }
               </p>
               <p className="text-gray-400">
                 {selectedVotes.length}/{votesNeeded} selected
@@ -304,15 +331,17 @@ const AnswerDisplayScreen: React.FC<AnswerDisplayScreenProps> = ({
                 <div 
                   key={player.id}
                   className={`relative p-4 rounded-xl border-2 transition-all transform duration-300 min-h-[200px] flex flex-col ${
-                    votingStarted 
+                    player.isEliminated
+                      ? 'bg-gray-800/30 border-gray-700/50 opacity-50 filter blur-sm'
+                      : votingStarted 
                       ? (isSelected
                         ? 'bg-red-500/20 border-red-500/50 shadow-lg shadow-red-500/20'
-                        : isEligible
+                        : isEligible && player.id !== currentPlayer?.id
                         ? 'bg-gray-700/50 border-gray-600/50 hover:bg-gray-600/50 hover:scale-105 cursor-pointer'
                         : 'bg-gray-800/30 border-gray-700/50 opacity-50')
                       : 'bg-gray-700/50 border-gray-600/50'
                   } ${votingStarted && submitted ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  onClick={votingStarted && isEligible && !submitted && !(gameState.selectedPackType === 'custom' && currentPlayer?.role === 'spectator') ? () => handleVoteToggle(player.id) : undefined}
+                  onClick={votingStarted && isEligible && !player.isEliminated && player.id !== currentPlayer?.id && !submitted && !(gameState.selectedPackType === 'custom' && currentPlayer?.role === 'spectator') ? () => handleVoteToggle(player.id) : undefined}
                 >
                   {/* Avatar */}
                   <div className="relative mx-auto mb-3">
@@ -365,6 +394,13 @@ const AnswerDisplayScreen: React.FC<AnswerDisplayScreenProps> = ({
                     <div className="mt-2 text-center">
                       <span className="text-xs text-gray-500 bg-gray-800/50 px-2 py-1 rounded-full">
                         Not available
+                      </span>
+                    </div>
+                  )}
+                  {votingStarted && player.id === currentPlayer?.id && (
+                    <div className="mt-2 text-center">
+                      <span className="text-xs text-gray-500 bg-gray-800/50 px-2 py-1 rounded-full">
+                        You cannot vote for yourself
                       </span>
                     </div>
                   )}
@@ -447,16 +483,16 @@ const AnswerDisplayScreen: React.FC<AnswerDisplayScreenProps> = ({
               {!(gameState.selectedPackType === 'custom' && isSpectator) && (
                 <button
                   onClick={handleSubmitVotes}
-                  disabled={submitted || selectedVotes.length !== votesNeeded}
+                  disabled={submitted || (gameState.isRandomizeMode || gameState.isTieVote ? selectedVotes.length !== 1 : selectedVotes.length !== votesNeeded)}
                   className={`w-full py-4 rounded-xl shadow-lg transform transition-all duration-300 flex items-center justify-center space-x-3 font-semibold text-lg ${
-                    submitted || selectedVotes.length !== votesNeeded
+                    submitted || (gameState.isRandomizeMode || gameState.isTieVote ? selectedVotes.length !== 1 : selectedVotes.length !== votesNeeded)
                       ? 'bg-gray-600/50 text-gray-400 cursor-not-allowed'
                       : 'bg-gradient-to-r from-green-500 to-emerald-500 text-white hover:shadow-xl hover:scale-105'
                   }`}
                 >
                   <Vote className="w-6 h-6" />
                   <span>
-                    {submitted ? 'Votes Submitted!' : `Submit Vote${votesNeeded > 1 ? 's' : ''}`}
+                    {submitted ? 'Vote Submitted!' : 'Submit Vote'}
                   </span>
                 </button>
               )}

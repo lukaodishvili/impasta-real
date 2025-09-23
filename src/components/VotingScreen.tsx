@@ -49,7 +49,7 @@ export default function VotingScreen({
         (gameState.selectedPackType !== 'custom' || p.role !== 'spectator')
       );
     } else {
-      // In normal voting, can vote for anyone including yourself (exclude spectators for custom packs)
+      // In normal voting, can vote for anyone except yourself
       return gameState.players.filter(p => 
         !gameState.eliminatedPlayers.includes(p.id) &&
         (gameState.selectedPackType !== 'custom' || p.role !== 'spectator')
@@ -57,7 +57,7 @@ export default function VotingScreen({
     }
   }, [gameState.players, gameState.isTieVote, gameState.tiedPlayers, gameState.eliminatedPlayers, currentPlayerId, gameState.selectedPackType]);
 
-  const votesNeeded = gameState.isTieVote ? (gameState.impostorCount - gameState.eliminatedPlayers.length) : gameState.impostorCount;
+  const votesNeeded = gameState.isRandomizeMode || gameState.isTieVote ? 1 : gameState.impostorCount;
 
   // Memoize main content
   const mainContent = useMemo(() => {
@@ -117,9 +117,10 @@ export default function VotingScreen({
   useEffect(() => {
     if (!votingStarted) return;
 
-    const players = gameState.players;
-    // Only vote for bots that haven't voted yet
-    const bots = players.filter(player => 
+    const activePlayers = gameState.players.filter(p => !p.isEliminated);
+    
+    // Only vote for bots that haven't voted yet and are not eliminated
+    const bots = activePlayers.filter(player => 
       (player.isBot || player.username.startsWith('Bot_')) && 
       !gameState.votes[player.id]
     );
@@ -132,7 +133,7 @@ export default function VotingScreen({
     bots.forEach((bot) => {
       const botVotes = generateBotVotes(
         bot.id,
-        players,
+        activePlayers,
         votesNeeded,
         bot.personality || 'random',
         gameState.isTieVote ? gameState.tiedPlayers : undefined
@@ -147,8 +148,9 @@ export default function VotingScreen({
   useEffect(() => {
     if (!votingStarted || !gameState.isTieVote) return;
 
-    const players = gameState.players;
-    const bots = players.filter(player => 
+    const activePlayers = gameState.players.filter(p => !p.isEliminated);
+    
+    const bots = activePlayers.filter(player => 
       (player.isBot || player.username.startsWith('Bot_')) && 
       !gameState.votes[player.id]
     );
@@ -161,7 +163,7 @@ export default function VotingScreen({
     bots.forEach((bot) => {
       const botVotes = generateBotVotes(
         bot.id,
-        players,
+        activePlayers,
         votesNeeded, // Tie-breaker needs (N-M) votes
         bot.personality || 'random',
         gameState.tiedPlayers
@@ -184,19 +186,28 @@ export default function VotingScreen({
       if (prev.includes(playerId)) {
         return prev.filter(id => id !== playerId);
       } else {
-        // Allow multiple selections up to votesNeeded in both normal and tie-breaker modes
+        if (gameState.isRandomizeMode || gameState.isTieVote) {
+          return [playerId]; // Only allow one selection
+        }
         return prev.length < votesNeeded ? [...prev, playerId] : prev;
       }
     });
-  }, [submitted, votingStarted, votesNeeded, gameState.players, currentUsername, gameState.selectedPackType]);
+  }, [submitted, votingStarted, votesNeeded, gameState.isRandomizeMode, gameState.isTieVote, gameState.players, currentUsername, gameState.selectedPackType]);
 
   // Stable submit handler
   const handleSubmit = useCallback(() => {
-    if (submitted || !votingStarted || selectedVotes.length !== votesNeeded) {
+    if (submitted || !votingStarted) return;
+
+    if (gameState.isRandomizeMode || gameState.isTieVote) {
+      if (selectedVotes.length !== 1) {
+        setError('You must vote for exactly one player.');
+        return;
+      }
+    } else {
       if (selectedVotes.length !== votesNeeded) {
         setError(`Please select exactly ${votesNeeded} player${votesNeeded > 1 ? 's' : ''} to vote for.`);
+        return;
       }
-      return;
     }
 
     // Prevent spectators from submitting votes in custom packs
@@ -274,12 +285,21 @@ export default function VotingScreen({
                 <span className="text-2xl">❓</span>
               </div>
             </div>
-            <h2 className="text-2xl font-bold text-white mb-4">
-              {gameState.gameMode === 'questions' ? 'Question:' : 'Word:'}
+            <h2 className="text-5xl font-extrabold text-white tracking-tight">
+              {gameState.isTieVote ? "Tie Breaker!" : "Voting Time"}
             </h2>
-            <p className="text-lg text-gray-300 leading-relaxed">
-              {mainContent}
+            <p className="mt-4 text-xl text-gray-400">
+              {gameState.isTieVote
+                ? "It's a tie! Vote again between these players."
+                : (gameState.isRandomizeMode 
+                    ? "Vote for an impostor."
+                    : `Select ${votesNeeded} player${votesNeeded > 1 ? 's' : ''} to vote for.`)}
             </p>
+            {!submitted && (
+              <p className="text-2xl font-mono mt-4 text-white">
+                {selectedVotes.length}/{votesNeeded}
+              </p>
+            )}
           </div>
             </div>
 
@@ -308,8 +328,10 @@ export default function VotingScreen({
               }
               return (
                 <p className="text-white text-lg font-semibold">
-                  {gameState.isTieVote 
-                    ? `Select ${votesNeeded} player${votesNeeded > 1 ? 's' : ''} to eliminate (${selectedVotes.length}/${votesNeeded})`
+                  {gameState.isRandomizeMode
+                    ? `Vote for an impostor (${selectedVotes.length}/${votesNeeded})`
+                    : gameState.isTieVote 
+                    ? `Select 1 player to eliminate (${selectedVotes.length}/1)`
                     : `Select ${votesNeeded} impostor${votesNeeded > 1 ? 's' : ''} (${selectedVotes.length}/${votesNeeded})`
                   }
                 </p>
@@ -343,12 +365,12 @@ export default function VotingScreen({
                     votingStarted 
                       ? (isSelected
                         ? 'bg-red-500/20 border-red-500/50 shadow-lg shadow-red-500/20'
-                        : isEligible
+                        : isEligible && player.id !== currentPlayerId
                         ? 'bg-gray-700/50 border-gray-600/50 hover:bg-gray-600/50 hover:scale-105 cursor-pointer'
                         : 'bg-gray-800/30 border-gray-700/50 opacity-50')
                       : 'bg-gray-700/50 border-gray-600/50'
                   } ${votingStarted && submitted ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  onClick={votingStarted && isEligible && !submitted && !isSpectator ? () => handleVoteToggle(player.id) : undefined}
+                  onClick={votingStarted && isEligible && player.id !== currentPlayerId && !submitted && !isSpectator ? () => handleVoteToggle(player.id) : undefined}
                 >
                   {/* Avatar */}
                   <div className="relative mx-auto mb-3">
@@ -404,6 +426,13 @@ export default function VotingScreen({
                       </span>
                 </div>
               )}
+              {votingStarted && player.id === currentPlayerId && (
+                <div className="mt-2 text-center">
+                  <span className="text-xs text-gray-500 bg-gray-800/50 px-2 py-1 rounded-full">
+                    You cannot vote for yourself
+                  </span>
+                </div>
+              )}
             </div>
             );
           })}
@@ -454,16 +483,16 @@ export default function VotingScreen({
                 <div className="space-y-4">
           <button
             onClick={handleSubmit}
-                    disabled={submitted || selectedVotes.length !== votesNeeded}
+                    disabled={submitted || (gameState.isRandomizeMode || gameState.isTieVote ? selectedVotes.length !== 1 : selectedVotes.length !== votesNeeded)}
                     className={`w-full py-4 rounded-xl shadow-lg transform transition-all duration-300 flex items-center justify-center space-x-3 font-semibold text-lg ${
-                      submitted || selectedVotes.length !== votesNeeded
+                      submitted || (gameState.isRandomizeMode || gameState.isTieVote ? selectedVotes.length !== 1 : selectedVotes.length !== votesNeeded)
                         ? 'bg-gray-600/50 text-gray-400 cursor-not-allowed'
                         : 'bg-gradient-to-r from-green-500 to-emerald-500 text-white hover:shadow-xl hover:scale-105'
                     }`}
                   >
                     <Vote className="w-6 h-6" />
                     <span>
-                      {submitted ? 'Votes Submitted!' : `Submit Vote${votesNeeded > 1 ? 's' : ''}`}
+                      {submitted ? 'Vote Submitted!' : 'Submit Vote'}
                     </span>
                   </button>
                   
