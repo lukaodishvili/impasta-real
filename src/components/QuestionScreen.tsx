@@ -201,7 +201,7 @@ export default function QuestionScreen({
           
           {question ? (
             <div className="bg-gray-700/50 border border-gray-600/50 rounded-xl p-6">
-              <p className="text-center text-xl text-white leading-relaxed">
+              <p className="text-center text-xl text-white leading-relaxed break-words hyphens-auto">
                 "{question}"
               </p>
             </div>

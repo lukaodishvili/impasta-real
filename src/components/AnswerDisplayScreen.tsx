@@ -290,7 +290,7 @@ const AnswerDisplayScreen: React.FC<AnswerDisplayScreenProps> = ({
               <h2 className="text-xl font-bold text-white mb-4">
                 {t.question}:
               </h2>
-              <p className="text-lg text-white leading-relaxed">
+              <p className="text-lg text-white leading-relaxed break-words hyphens-auto">
                 {gameState.currentQuestion}
               </p>
             </div>

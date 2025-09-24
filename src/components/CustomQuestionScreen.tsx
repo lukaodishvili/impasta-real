@@ -120,7 +120,7 @@ export default function CustomQuestionScreen({ gameMode, onSave, onBack, languag
                   onChange={(e) => setInnocentQuestion(e.target.value)}
                   placeholder={t.innocentPlaceholder}
                   className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl resize-none h-24 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-300 text-white placeholder-gray-300"
-                  maxLength={200}
+                  maxLength={150}
                 />
               </div>
 
@@ -134,7 +134,7 @@ export default function CustomQuestionScreen({ gameMode, onSave, onBack, languag
                   onChange={(e) => setImpostorQuestion(e.target.value)}
                   placeholder={t.impostorPlaceholder}
                   className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl resize-none h-24 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-300 text-white placeholder-gray-300"
-                  maxLength={200}
+                  maxLength={150}
                 />
               </div>
             </>

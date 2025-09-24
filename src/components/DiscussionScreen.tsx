@@ -255,7 +255,7 @@ export default function DiscussionScreen({
                 {t.innocentQuestion}
               </h3>
               <div className="bg-white/10 backdrop-blur-sm border border-white/20 p-6 rounded-2xl shadow-lg">
-                <p className="text-lg font-medium text-white leading-relaxed">{currentQuestion}</p>
+                <p className="text-lg font-medium text-white leading-relaxed break-words hyphens-auto">{currentQuestion}</p>
               </div>
             </div>
           </div>

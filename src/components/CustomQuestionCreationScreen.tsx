@@ -13,7 +13,7 @@ export default function CustomQuestionCreationScreen({ onSave, onBack, language 
   const [impostorQuestion, setImpostorQuestion] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const MAX_LENGTH = 200;
+  const MAX_LENGTH = 150;
 
   const texts = {
     en: {
