@@ -29,6 +29,16 @@ const AnswerDisplayScreen: React.FC<AnswerDisplayScreenProps> = ({
 
   const currentPlayer = gameState.players.find(p => p.username === currentUsername);
 
+  // ADDED: Reset state on new tie-breaker round
+  useEffect(() => {
+    if (gameState.isTieVote) {
+      setVotingStarted(true);
+      setSelectedVotes([]);
+      setSubmitted(false);
+      setError(null);
+    }
+  }, [gameState.isTieVote, gameState.tiedPlayers]);
+  
   // Timer countdown
   useEffect(() => {
     if (!isTimerRunning || timeLeft <= 0) return;

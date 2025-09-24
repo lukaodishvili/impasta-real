@@ -40,15 +40,47 @@ const processVotingResults = (
     const totalNeeded = gameState.impostorCount;
     const remainingToEliminate = totalNeeded - alreadyEliminatedCount;
 
-    const highestVoteCount = sortedTiedPlayers.length > 0 ? sortedTiedPlayers[0][1] : 0;
-    const playersWithHighestVotes = sortedTiedPlayers.filter(([, votes]) => votes === highestVoteCount);
+    // If we don't have enough players to eliminate, or no one voted, end the round.
+    if (sortedTiedPlayers.length < remainingToEliminate || sortedTiedPlayers.length === 0 || remainingToEliminate <= 0) {
+      const playersToEliminate = sortedTiedPlayers.slice(0, remainingToEliminate).map(([id]) => id);
+      const newEliminatedPlayers = [...gameState.eliminatedPlayers, ...playersToEliminate];
+      const { winners, winnerType } = determineWinner(gameState, gameState.players, newEliminatedPlayers);
 
-    if (playersWithHighestVotes.length > remainingToEliminate && highestVoteCount > 0) {
+      setGameState(prev => ({
+        ...prev,
+        phase: 'voteResults',
+        eliminatedPlayers: newEliminatedPlayers,
+        votes: {},
+        tieBreakerVotes: [...(prev.tieBreakerVotes || []), allVotes],
+        winners,
+        winnerType,
+        isTieVote: false,
+        tiedPlayers: [],
+      }));
+      setCurrentScreen('voteResults');
+      return;
+    }
+    
+    // Check for a tie at the elimination boundary
+    const eliminationVoteCount = sortedTiedPlayers[remainingToEliminate - 1][1];
+    const potentialTie = sortedTiedPlayers[remainingToEliminate]?.[1] === eliminationVoteCount;
+
+    if (potentialTie) {
       console.log('Another tie detected in tie-breaker round.');
+      
+      const playersToEliminate = sortedTiedPlayers
+        .filter(([, votes]) => votes > eliminationVoteCount)
+        .map(([id]) => id);
+
+      const playersInNewTie = sortedTiedPlayers
+        .filter(([, votes]) => votes === eliminationVoteCount)
+        .map(([id]) => id);
+      
       setGameState(prev => ({
         ...prev,
         isTieVote: true,
-        tiedPlayers: playersWithHighestVotes.map(([id]) => id),
+        tiedPlayers: playersInNewTie,
+        eliminatedPlayers: [...prev.eliminatedPlayers, ...playersToEliminate],
         votes: {}, // Clear votes for the next round
         tieBreakerVotes: [...(prev.tieBreakerVotes || []), allVotes],
       }));
@@ -132,7 +164,9 @@ const processVotingResults = (
       // STILL A TIE, or a new tie.
       setGameState(prev => {
         // If the round we just processed was a tie-breaker, its votes need to be stored.
-        const newTieBreakerLog = wasTieBreakerRound ? [...(prev.tieBreakerVotes || []), { ...allVotes }] : prev.tieBreakerVotes;
+        const newTieBreakerLog = wasTieBreakerRound 
+          ? [...(prev.tieBreakerVotes || []), { ...allVotes }] 
+          : prev.tieBreakerVotes;
         
         return {
           ...prev,

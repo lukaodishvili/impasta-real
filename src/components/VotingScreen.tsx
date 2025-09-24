@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { GameState } from '../types';
 import { generateBotVotes } from '../utils/botUtils';
 import { User, Vote, Clock, MessageCircle, Play } from 'lucide-react';
+import { clsx } from 'clsx';
 
 interface VotingScreenProps {
   gameState: GameState;
@@ -57,6 +58,14 @@ export default function VotingScreen({
     }
   }, [gameState.players, gameState.isTieVote, gameState.tiedPlayers, gameState.eliminatedPlayers, currentPlayerId, gameState.selectedPackType]);
 
+  // ADDED: Reset state on new tie-breaker round
+  useEffect(() => {
+    if (gameState.isTieVote) {
+      setSelectedVotes([]);
+      setSubmitted(false);
+    }
+  }, [gameState.isTieVote, gameState.tiedPlayers]);
+
   const votesNeeded = gameState.isRandomizeMode || gameState.isTieVote ? 1 : gameState.impostorCount;
 
   // Memoize main content
@@ -67,6 +76,15 @@ export default function VotingScreen({
       return `Word: ${gameState.currentWord || 'No word available'}`;
     }
   }, [gameState.gameMode, gameState.currentQuestion, gameState.currentWord]);
+
+  // Memoize votable players for rendering
+  const votablePlayers = useMemo(() => {
+    const activePlayers = gameState.players.filter(p => !p.isEliminated);
+    if (gameState.isTieVote && gameState.tiedPlayers.length > 0) {
+      return activePlayers.filter(p => gameState.tiedPlayers.includes(p.id));
+    }
+    return activePlayers;
+  }, [gameState.players, gameState.eliminatedPlayers, gameState.isTieVote, gameState.tiedPlayers]);
 
   // Reset state when switching between normal and tie-breaker voting
   useEffect(() => {
@@ -354,7 +372,7 @@ export default function VotingScreen({
           </h3>
           
           <div className="grid grid-cols-2 gap-4">
-            {playersToShow.map((player) => {
+            {votablePlayers.map((player) => {
               const isSelected = selectedVotes.includes(player.id);
               const isEligible = eligiblePlayers.some(p => p.id === player.id);
               

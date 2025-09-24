@@ -217,12 +217,14 @@ export default function VoteResultsScreen({
           <div className="space-y-4">
             {isRandomizeMode ? (
               <>
-                <button
-                  onClick={onContinueRandomize}
-                  className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-500 text-white font-semibold rounded-2xl shadow-lg hover:scale-105 transition-transform"
-                >
-                  {t.continueGame}
-                </button>
+                {eliminatedPlayers.length < 4 && (
+                  <button
+                    onClick={onContinueRandomize}
+                    className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-500 text-white font-semibold rounded-2xl shadow-lg hover:scale-105 transition-transform"
+                  >
+                    {t.continueGame}
+                  </button>
+                )}
                 <button
                   onClick={onFinishRandomize}
                   className="w-full py-4 bg-gradient-to-r from-red-500 to-pink-500 text-white font-semibold rounded-2xl shadow-lg hover:scale-105 transition-transform"
