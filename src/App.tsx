@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Player, GameState, GameMode, WordPack, GamePack, PlayerRole, WinnerType } from './types';
-import { assignRoles, generateRoomCode, getRandomImpostorCount } from './utils/gameUtils';
-import { createBot, generateBotAnswer, generateBotVotes } from './utils/botUtils';
-import { getRandomQuestion, getRandomImpostorQuestion, getRandomWord, determineWinner, generateJesterClues } from './utils/gameLogic';
+import { Player, GameState, GameMode, WordPack, GamePack, WinnerType } from './types';
+import { generateRoomCode } from './utils/gameUtils';
+import { createBot, generateBotAnswer } from './utils/botUtils';
+import { determineWinner, determineRandomizeWinner, initializeGame } from './utils/gameLogic';
+import { processWordsGameVotes, determineWordsGameWinner } from './utils/wordsGameLogic';
 import CustomQuestionCreationScreen from './components/CustomQuestionCreationScreen';
 import CustomWordCreationScreen from './components/CustomWordCreationScreen';
 // import { getTestQuestionPack } from './data/testQuestionPacks';
@@ -16,6 +17,37 @@ const processVotingResults = (
   setCurrentScreen: (screen: string) => void,
   determineWinner: (gameState: GameState, players: Player[], eliminatedPlayers: string[]) => { winners: Player[]; winnerType?: WinnerType }
 ) => {
+  
+  // Use words game logic for words game mode
+  if (gameState.gameMode === 'words') {
+    console.log('Using words game voting logic');
+    
+    // For words game, use standard mode logic (no randomize mode, no jester)
+    const updatedGameState = processWordsGameVotes(gameState, allVotes, gameState.players);
+    
+    if (updatedGameState.winners && updatedGameState.winners.length > 0) {
+      // Game ended - show results
+      setGameState(prev => ({
+        ...prev,
+        ...updatedGameState,
+        players: prev.players.map(p => 
+          updatedGameState.eliminatedPlayers.includes(p.id) ? { ...p, isEliminated: true } : p
+        )
+      }));
+      setCurrentScreen('results');
+    } else {
+      // Game continues - show vote results
+      setGameState(prev => ({
+        ...prev,
+        ...updatedGameState,
+        players: prev.players.map(p => 
+          updatedGameState.eliminatedPlayers.includes(p.id) ? { ...p, isEliminated: true } : p
+        )
+      }));
+      setCurrentScreen('voteResults');
+    }
+    return;
+  }
 
   // --- NEW: TIE-BREAKER RESULT LOGIC FOR NORMAL MODE ---
   if (gameState.isTieVote && !gameState.isRandomizeMode) {
@@ -44,7 +76,11 @@ const processVotingResults = (
     if (sortedTiedPlayers.length < remainingToEliminate || sortedTiedPlayers.length === 0 || remainingToEliminate <= 0) {
       const playersToEliminate = sortedTiedPlayers.slice(0, remainingToEliminate).map(([id]) => id);
       const newEliminatedPlayers = [...gameState.eliminatedPlayers, ...playersToEliminate];
-      const { winners, winnerType } = determineWinner(gameState, gameState.players, newEliminatedPlayers);
+      // Update the isEliminated flag on the player objects themselves
+      const updatedPlayers = gameState.players.map(p => 
+        newEliminatedPlayers.includes(p.id) ? { ...p, isEliminated: true } : p
+      );
+      const { winners, winnerType } = determineWinner(gameState, updatedPlayers, newEliminatedPlayers);
 
       setGameState(prev => ({
         ...prev,
@@ -90,7 +126,11 @@ const processVotingResults = (
 
     const playersToEliminate = sortedTiedPlayers.slice(0, remainingToEliminate).map(([id]) => id);
     const newEliminatedPlayers = [...gameState.eliminatedPlayers, ...playersToEliminate];
-    const { winners, winnerType } = determineWinner(gameState, gameState.players, newEliminatedPlayers);
+    // Update the isEliminated flag on the player objects themselves
+    const updatedPlayers = gameState.players.map(p => 
+      newEliminatedPlayers.includes(p.id) ? { ...p, isEliminated: true } : p
+    );
+    const { winners, winnerType } = determineWinner(gameState, updatedPlayers, newEliminatedPlayers);
 
     setGameState(prev => ({
       ...prev,
@@ -184,7 +224,10 @@ const processVotingResults = (
       const eliminatedPlayerIds = highestVoteCount > 0 ? [playersWithHighestVotes[0][0]] : [];
       setGameState(prev => {
         const newEliminatedPlayers = [...prev.eliminatedPlayers, ...eliminatedPlayerIds];
-        const updatedPlayers = prev.players.map(p => ({ ...p, isEliminated: newEliminatedPlayers.includes(p.id) }));
+        // Update the isEliminated flag on the player objects themselves
+        const updatedPlayers = prev.players.map(p => 
+          newEliminatedPlayers.includes(p.id) ? { ...p, isEliminated: true } : p
+        );
 
         // If the round we just processed was a tie-breaker, its votes need to be stored.
         const newTieBreakerLog = wasTieBreakerRound ? [...(prev.tieBreakerVotes || []), { ...allVotes }] : prev.tieBreakerVotes;
@@ -193,7 +236,7 @@ const processVotingResults = (
           ...prev,
           phase: 'voteResults',
           votes: allVotes,
-          players: updatedPlayers,
+          players: updatedPlayers, // <-- Use the updated players array
           eliminatedPlayers: newEliminatedPlayers,
           previousEliminatedPlayers: prev.eliminatedPlayers,
           
@@ -307,7 +350,6 @@ const processVotingResults = (
       tiedPlayers: playersWithNthVotes.map(([playerId]) => playerId),
       votes: {}, // Clear all votes for tie-breaker round
       originalVotes: originalVotes, // Store original votes
-      previousEliminatedPlayers: gameState.eliminatedPlayers, // Capture state before ANY eliminations this round
     });
     setCurrentScreen('voting');
   } else {
@@ -324,10 +366,15 @@ const processVotingResults = (
       
       setGameState(prev => {
         const newEliminatedPlayers = [...prev.eliminatedPlayers, ...eliminatedPlayerIds];
+        // Update the isEliminated flag on the player objects themselves
+        const updatedPlayers = prev.players.map(p => 
+          newEliminatedPlayers.includes(p.id) ? { ...p, isEliminated: true } : p
+        );
         
         return {
           ...prev,
           phase: 'voteResults', // <-- CHANGE HERE
+          players: updatedPlayers, // <-- Use the updated players array
           votes: allVotes,
           originalVotes: allVotes, // Store original votes for vote breakdown
           eliminatedPlayers: newEliminatedPlayers,
@@ -345,10 +392,15 @@ const processVotingResults = (
     // Game continues - show vote results
     setGameState(prev => {
       const newEliminatedPlayers = [...prev.eliminatedPlayers, ...eliminatedPlayerIds];
+      // Update the isEliminated flag on the player objects themselves
+      const updatedPlayers = prev.players.map(p => 
+        newEliminatedPlayers.includes(p.id) ? { ...p, isEliminated: true } : p
+      );
 
       return {
         ...prev,
         phase: 'voteResults',
+        players: updatedPlayers, // <-- Use the updated players array
         votes: allVotes,
         originalVotes: allVotes, // Store original votes for vote breakdown
         eliminatedPlayers: newEliminatedPlayers,
@@ -705,99 +757,45 @@ function App() {
     
     // Mark that we've played at least once
     setHasPlayedOnce(true);
-    
-    const playingPlayers = gameState.selectedPackType === 'custom' 
-    ? gameState.players.filter(p => p.role !== 'spectator')
-    : gameState.players;
 
-    let finalImpostorCount = gameState.impostorCount;
-    if (gameState.isRandomizeMode) {
-      const randomCount = getRandomImpostorCount(playingPlayers.length);
-      finalImpostorCount = Math.min(randomCount, 3);
-    }
-    // Assign roles
-    const roleAssignments = assignRoles(gameState.players, finalImpostorCount, gameState.hasJester);
-    
-    // Generate content based on selected pack
-    let question = '';
-    let impostorQuestion = '';
-    let word = '';
+    const customContent = gameState.gameMode === 'questions'
+      ? [gameState.currentQuestion, gameState.currentImpostorQuestion]
+      : [gameState.currentWord];
 
-    if (gameState.gameMode === 'questions') {
-      if (gameState.selectedPackType === 'custom') {
-        question = gameState.currentQuestion;
-        impostorQuestion = gameState.currentImpostorQuestion;
-      } else {
-        question = getRandomQuestion(gameState.selectedPack as string);
-        impostorQuestion = getRandomImpostorQuestion(gameState.selectedPack as string);
-      }
-    } else {
-      if (gameState.selectedPackType === 'custom') {
-        word = gameState.currentWord;
-      } else {
-        word = getRandomWord(gameState.selectedPack as WordPack);
-      }
-    }
+    const newGameState = initializeGame(
+      gameState.players,
+      // For words game, never use randomize mode
+      gameState.gameMode === 'words' ? gameState.impostorCount : (gameState.isRandomizeMode ? 'randomize' : gameState.impostorCount),
+      // For words game, never use jester
+      gameState.gameMode === 'words' ? false : gameState.hasJester,
+      gameState.gameMode,
+      // For words game, always use standard mode (no randomize)
+      gameState.gameMode === 'words' ? false : gameState.isRandomizeMode,
+      gameState.selectedPackType === 'custom' ? customContent : undefined
+    );
 
-    let impostorWord = '';
-    if (gameState.gameMode === 'words') {
-      if (gameState.selectedPackType === 'custom') {
-        impostorWord = gameState.currentImpostorWord;
-      } else {
-        impostorWord = getRandomWord(gameState.selectedPack as WordPack);
-      }
-    }
-
-    // Create player roles mapping
-    const playerRoles: Record<string, PlayerRole> = {};
-    
-    console.log('ROLE ASSIGNMENT DEBUG:', {
-      allPlayers: gameState.players.map(p => ({ id: p.id, username: p.username, role: p.role, isBot: p.isBot })),
-      roleAssignments: roleAssignments,
-      impostorCount: finalImpostorCount
-    });
-    
-    // Apply roles to ALL players (assignRoles returns roles for all players)
-    gameState.players.forEach((player, index) => {
-      playerRoles[player.id] = roleAssignments[index];
-      console.log(`Assigned ${roleAssignments[index]} to ${player.username} (${player.id})`);
-    });
-
-    // Generate jester clues if jester is enabled
-    const jesterCluePlayers = gameState.hasJester ? generateJesterClues(gameState.players, playerRoles, gameState.hasJester) : [];
-
-        setGameState(prev => ({
-          ...prev,
-      phase: 'questions',
-      impostorCount: finalImpostorCount,
-      currentQuestion: question,
-      currentImpostorQuestion: impostorQuestion,
-      currentWord: word,
-      currentImpostorWord: impostorWord,
-      playerRoles,
-      jesterCluePlayers,
-      currentRound: 1,
-      playerAnswers: {},
-      submittedAnswers: {},
-      votes: {},
-      eliminatedPlayers: [],
-      winners: [],
-      winnerType: undefined,
-      isTieVote: false,
-      tiedPlayers: [],
-      gameEndReason: undefined,
-      currentVoteResult: undefined
+    setGameState(prev => ({
+      ...prev,
+      ...newGameState,
+      // Preserve players and room info from lobby
+      players: newGameState.players.map(p => {
+        const oldPlayer = prev.players.find(op => op.id === p.id);
+        return { ...oldPlayer, ...p };
+      }),
+      roomCode: prev.roomCode, 
+      selectedPack: prev.selectedPack,
+      selectedPackType: prev.selectedPackType
     }));
-
-      // Check if current user is a spectator (host in custom packs)
-      const currentPlayer = gameState.players.find(p => p.username === username);
-      if (currentPlayer?.role === 'spectator') {
-        console.log('Host is spectator, going to answers screen to wait for players');
-        setCurrentScreen('answers');
-      } else {
-        console.log('Setting screen to questions');
-        setCurrentScreen('questions');
-      }
+    
+    // Check if current user is a spectator (host in custom packs)
+    const currentPlayer = gameState.players.find(p => p.username === username);
+    if (currentPlayer?.role === 'spectator') {
+      console.log('Host is spectator, going to answers screen to wait for players');
+      setCurrentScreen('answers');
+    } else {
+      console.log('Setting screen to questions');
+      setCurrentScreen('questions');
+    }
   };
 
   const handleAnswerSubmit = (answer: string) => {
@@ -900,64 +898,25 @@ function App() {
   };
 
 
-  const handleForceSubmitBotVotes = useCallback(() => {
-    console.log('FORCE SUBMIT BOT VOTES ONLY - Only forcing bots to vote...');
+  const handleSubmitVotes = (userVotes: string[] = []) => {
+    console.log('App.tsx handleSubmitVotes called with userVotes:', userVotes);
+    const currentPlayer = gameState.players.find(p => p.username === username);
+    if (!currentPlayer) {
+      console.log('App.tsx handleSubmitVotes: No current player found');
+      return;
+    }
+
+    console.log('App.tsx handleSubmitVotes: Current player found:', currentPlayer.username);
     
+    // Add user's vote to the votes if provided
+    const allVotes = { ...gameState.votes };
+    if (userVotes.length > 0) {
+      allVotes[currentPlayer.id] = userVotes;
+      console.log('App.tsx handleSubmitVotes: Added user vote to allVotes:', allVotes);
+    }
+    
+    // Get non-eliminated players for validation
     const nonEliminatedPlayers = gameState.players.filter(p => !p.isEliminated);
-    const botVotes: Record<string, string[]> = {};
-    
-    nonEliminatedPlayers.forEach(player => {
-      if (player.isBot && !gameState.votes[player.id] && 
-          (gameState.selectedPackType !== 'custom' || player.role !== 'spectator')) {
-        const votesNeeded = gameState.isRandomizeMode || gameState.isTieVote ? 1 : (gameState.impostorCount - gameState.eliminatedPlayers.length);
-        const tiedPlayers = gameState.isTieVote ? gameState.tiedPlayers : undefined;
-        
-        const votes = generateBotVotes(
-          player.id,
-          nonEliminatedPlayers,
-          votesNeeded,
-          player.personality || 'random',
-          tiedPlayers
-        );
-        botVotes[player.id] = votes;
-        console.log(`Force submit bot votes - Bot ${player.username} voting:`, votes);
-      }
-    });
-    
-    console.log('Force submit bot votes - Generated votes:', botVotes);
-          
-          setGameState(prev => ({
-            ...prev,
-      votes: { ...prev.votes, ...botVotes }
-    }));
-  }, [gameState.players, gameState.votes, gameState.isTieVote, gameState.tiedPlayers, gameState.impostorCount, gameState.eliminatedPlayers, gameState.isRandomizeMode]);
-
-  const handleSubmitVotes = () => {
-      const currentPlayer = gameState.players.find(p => p.username === username);
-    if (!currentPlayer) return;
-
-    // Generate bot votes for all bots that haven't voted
-    const nonEliminatedPlayers = gameState.players.filter(p => !p.isEliminated);
-    const botVotes: Record<string, string[]> = {};
-        
-    nonEliminatedPlayers.forEach(player => {
-      if (player.isBot && !gameState.votes[player.id] && 
-          (gameState.selectedPackType !== 'custom' || player.role !== 'spectator')) {
-          const votesNeeded = gameState.isRandomizeMode || gameState.isTieVote ? 1 : (gameState.impostorCount - gameState.eliminatedPlayers.length);
-          const tiedPlayers = gameState.isTieVote ? gameState.tiedPlayers : undefined;
-        
-        const votes = generateBotVotes(
-          player.id,
-          nonEliminatedPlayers,
-          votesNeeded,
-          player.personality || 'random',
-          tiedPlayers
-        );
-        botVotes[player.id] = votes;
-      }
-    });
-
-          const allVotes = { ...gameState.votes, ...botVotes };
           
     // VALIDATION: Ensure all NON-SPECTATOR players have voted before processing results
     const allPlayers = nonEliminatedPlayers;
@@ -972,7 +931,10 @@ function App() {
       nonSpectatorPlayers: nonSpectatorPlayers.length,
       playersWhoVoted: playersWhoVoted.length,
       playersWhoHaventVoted: playersWhoHaventVoted.map(p => ({ id: p.id, username: p.username, isBot: p.isBot, role: p.role })),
-      allVotes: Object.keys(allVotes)
+      allVotes: Object.keys(allVotes),
+      allVotesDetails: allVotes,
+      gameMode: gameState.gameMode,
+      selectedPackType: gameState.selectedPackType
     });
     
     if (playersWhoHaventVoted.length > 0) {
@@ -981,8 +943,37 @@ function App() {
         return;
       }
       
-    // Process voting results
-    processVotingResults(allVotes, gameState, setGameState, (screen: string) => setCurrentScreen(screen as Screen), determineWinner);
+    // Process voting results - use words game logic for words game
+    if (gameState.gameMode === 'words') {
+      console.log('App.tsx: Processing words game votes with allVotes:', allVotes);
+      const updatedGameState = processWordsGameVotes(gameState, allVotes, gameState.players);
+      console.log('App.tsx: Updated game state after processing:', {
+        phase: updatedGameState.phase,
+        isTieVote: updatedGameState.isTieVote,
+        eliminatedPlayers: updatedGameState.eliminatedPlayers,
+        winners: updatedGameState.winners?.length || 0
+      });
+      
+      setGameState(updatedGameState);
+      
+      // Navigate to appropriate screen based on game state
+      if (updatedGameState.phase === 'results') {
+        console.log('App.tsx: Navigating to results screen');
+        setCurrentScreen('results');
+      } else if (updatedGameState.phase === 'voteResults') {
+        console.log('App.tsx: Navigating to voteResults screen');
+        setCurrentScreen('voteResults');
+      } else if (updatedGameState.phase === 'voting' && updatedGameState.isTieVote) {
+        console.log('App.tsx: Staying on voting screen for tie-breaker');
+        setCurrentScreen('voting'); // Stay on voting screen for tie-breaker
+      } else {
+        console.log('App.tsx: Unknown phase, staying on current screen:', updatedGameState.phase);
+      }
+    } else {
+      // Use questions game logic
+      console.log('App.tsx: Processing questions game votes');
+      processVotingResults(allVotes, gameState, setGameState, (screen: string) => setCurrentScreen(screen as Screen), determineWinner);
+    }
   };
 
   const handleStartTieBreaker = () => {
@@ -992,18 +983,23 @@ function App() {
   const handleContinueRandomize = () => {
     setGameState(prev => ({
       ...prev,
-      phase: 'questions', // Reset to discussion phase
+      phase: gameState.gameMode === 'words' ? 'discussion' : 'questions', // Reset to appropriate phase
       votes: {}, // Clear votes for the new round
       isTieVote: false,
       tiedPlayers: [],
       originalVotes: undefined, // Clear vote history for the new round
       tieBreakerVotes: undefined,
     }));
-    setCurrentScreen('answers');
+    // For words game, go to discussion screen; for questions game, go to answers screen
+    setCurrentScreen(gameState.gameMode === 'words' ? 'discussion' : 'answers');
   };
 
   const handleFinishRandomize = () => {
-    const { winners, winnerType } = determineWinner(gameState, gameState.players, gameState.eliminatedPlayers);
+    // Use words game logic for words game mode
+    const { winners, winnerType } = gameState.gameMode === 'words' 
+      ? determineWordsGameWinner(gameState, gameState.players)
+      : determineRandomizeWinner(gameState, gameState.players);
+    
     setGameState(prev => ({
       ...prev,
       phase: 'results',
@@ -1193,16 +1189,8 @@ function App() {
       } else if (gameState.isTieVote) {
         console.log('Tie-breaker active - waiting for all players to vote again...');
       }
-      
-      // Force bots to vote after 3 seconds, but don't force human players
-      const timer = setTimeout(() => {
-        console.log('Bot voting timer expired, force submitting bot votes only...');
-        handleForceSubmitBotVotes();
-      }, 3000); // 3 seconds - only for bots
-
-      return () => clearTimeout(timer);
     }
-  }, [currentScreen, gameState.phase, gameState.players.length, gameState.votes, gameState.eliminatedPlayers.length, username]);
+  }, [currentScreen, gameState.phase, gameState.players.length, gameState.votes, gameState.eliminatedPlayers.length, username, handleSubmitVotes]);
 
   // Auto-vote for bots in voting screen - DISABLED to prevent conflicts with VotingScreen logic
   // useEffect(() => {
@@ -1265,8 +1253,17 @@ function App() {
       // No need to change screens
     };
 
+    const handleNavigateToDiscussion = () => {
+      console.log('Navigating to discussion screen from word game');
+      setCurrentScreen('discussion');
+    };
+
     window.addEventListener('navigateToVoting', handleNavigateToVoting);
-    return () => window.removeEventListener('navigateToVoting', handleNavigateToVoting);
+    window.addEventListener('navigateToDiscussion', handleNavigateToDiscussion);
+    return () => {
+      window.removeEventListener('navigateToVoting', handleNavigateToVoting);
+      window.removeEventListener('navigateToDiscussion', handleNavigateToDiscussion);
+    };
   }, []);
 
   // Auto-adjust game settings when player count changes or when entering lobby
@@ -1422,7 +1419,7 @@ function App() {
                 
                 // Process voting results
                 setTimeout(() => {
-                  handleSubmitVotes();
+                  handleSubmitVotes(votes);
                 }, 100);
               }
             }}
@@ -1499,8 +1496,10 @@ function App() {
                   ...prev,
                   votes: { ...prev.votes, [currentPlayer.id]: votes }
                 }));
-                // Process votes immediately - the useEffect will handle the timing
-                // handleSubmitVotes();
+                // Process votes immediately
+                setTimeout(() => {
+                  handleSubmitVotes(votes);
+                }, 100);
               }
             }}
             onBotVote={handleBotVote}

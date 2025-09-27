@@ -280,7 +280,7 @@ export default function LobbyScreen({
               </div>
 
               {/* Randomize & Jester */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className={`grid ${gameState.gameMode === 'words' ? 'grid-cols-1' : 'grid-cols-2'} gap-4`}>
                 <div>
                   <label className="block text-lg text-gray-300 mb-3 flex items-center space-x-2">
                     <span>{t.randomize}</span>
@@ -312,36 +312,39 @@ export default function LobbyScreen({
                   </button>
                 </div>
 
-                <div>
-                  <label className="block text-lg text-gray-300 mb-3 flex items-center space-x-2">
-                    <span>{t.jester}</span>
+                {/* Jester - Only show for questions game mode */}
+                {gameState.gameMode === 'questions' && (
+                  <div>
+                    <label className="block text-lg text-gray-300 mb-3 flex items-center space-x-2">
+                      <span>{t.jester}</span>
+                      <button
+                        ref={jesterTooltipRef}
+                        onClick={() => setShowJesterTooltip(!showJesterTooltip)}
+                        className="relative"
+                      >
+                        <HelpCircle className="w-4 h-4 text-gray-400 hover:text-gray-300" />
+                        {showJesterTooltip && (
+                          <div className="fixed left-1/2 transform -translate-x-1/2 top-1/2 -translate-y-1/2 w-80 max-w-[calc(100vw-2rem)] p-4 bg-gray-800 text-white text-sm rounded-lg shadow-lg z-[9999]">
+                            {t.jesterTooltip}
+                          </div>
+                        )}
+                      </button>
+                    </label>
                     <button
-                      ref={jesterTooltipRef}
-                      onClick={() => setShowJesterTooltip(!showJesterTooltip)}
-                      className="relative"
+                      onClick={() => onJesterToggle(!gameState.hasJester)}
+                      disabled={!canUseJester || gameState.isRandomizeMode}
+                      className={`w-full px-4 py-3 rounded-xl font-medium text-sm transition-all duration-200 ${
+                        gameState.hasJester
+                          ? 'bg-purple-500 hover:bg-purple-600 text-white'
+                          : !canUseJester || gameState.isRandomizeMode
+                          ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                          : 'bg-gray-600 hover:bg-gray-500 text-white'
+                      }`}
                     >
-                      <HelpCircle className="w-4 h-4 text-gray-400 hover:text-gray-300" />
-                      {showJesterTooltip && (
-                        <div className="fixed left-1/2 transform -translate-x-1/2 top-1/2 -translate-y-1/2 w-80 max-w-[calc(100vw-2rem)] p-4 bg-gray-800 text-white text-sm rounded-lg shadow-lg z-[9999]">
-                          {t.jesterTooltip}
-                        </div>
-                      )}
+                      {gameState.hasJester ? t.on : t.off}
                     </button>
-                  </label>
-                  <button
-                    onClick={() => onJesterToggle(!gameState.hasJester)}
-                    disabled={!canUseJester || gameState.isRandomizeMode}
-                    className={`w-full px-4 py-3 rounded-xl font-medium text-sm transition-all duration-200 ${
-                      gameState.hasJester
-                        ? 'bg-purple-500 hover:bg-purple-600 text-white'
-                        : !canUseJester || gameState.isRandomizeMode
-                        ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
-                        : 'bg-gray-600 hover:bg-gray-500 text-white'
-                    }`}
-                  >
-                    {gameState.hasJester ? t.on : t.off}
-                  </button>
-                </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>

@@ -109,6 +109,7 @@ export interface GameState {
   originalVotes?: Record<string, string[]>; // Store original voting round votes
   tieBreakerVotes?: Record<string, string[]>[]; // Store multiple tie-breaking rounds votes
   eliminatedPlayers: string[];
+  previousEliminatedPlayers?: string[];
   winners: Player[];
   winnerType?: WinnerType;
   playerRoles: Record<string, PlayerRole>;

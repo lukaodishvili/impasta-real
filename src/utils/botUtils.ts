@@ -72,21 +72,16 @@ export function generateBotVotes(
   personality: Bot['personality'],
   tiedPlayers?: string[]
 ): string[] {
-  console.log(`generateBotVotes called for bot ${botId}:`, {
-    allPlayers: allPlayers.map(p => ({ id: p.id, username: p.username, role: p.role })),
-    votesNeeded,
-    personality,
-    tiedPlayers
-  });
   
   let eligiblePlayers = allPlayers.filter(p => p.id !== botId && p.role !== 'spectator');
-  
+
   // If in tie-breaker mode, only allow voting for tied players
   if (tiedPlayers && tiedPlayers.length > 0) {
-    eligiblePlayers = eligiblePlayers.filter(p => tiedPlayers.includes(p.id) && p.id !== botId);
+    // Ensure tiedPlayers contains valid IDs by filtering out any undefined/null values
+    const validTiedPlayers = tiedPlayers.filter(id => id && typeof id === 'string');
+
+    eligiblePlayers = eligiblePlayers.filter(p => validTiedPlayers.includes(p.id) && p.id !== botId);
   }
-  
-  console.log(`Eligible players for bot ${botId}:`, eligiblePlayers.map(p => ({ id: p.id, username: p.username })));
   
   const votes: string[] = [];
 
@@ -144,6 +139,5 @@ export function generateBotVotes(
   }
 
   const finalVotes = votes.slice(0, votesNeeded);
-  console.log(`Bot ${botId} generated votes:`, finalVotes);
   return finalVotes;
 }

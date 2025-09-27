@@ -10,52 +10,63 @@ export function generatePlayerId(): string {
 }
 
 export function assignRoles(
-  players: { id: string; username: string; avatar?: string; isHost: boolean; role: 'innocent' | 'impostor' | 'jester' | 'spectator'; isConnected: boolean; answer: string; hasVoted: boolean }[], 
+  players: { id: string; role: 'spectator' | string }[], 
   impostorCount: number = 1, 
   hasJester: boolean = false
-): PlayerRole[] {
-  // Filter out spectators from role assignment
-  const playingPlayers = players.filter(player => player.role !== 'spectator');
-  const playerCount = playingPlayers.length;
-  const roles: PlayerRole[] = [];
-  
-  // Validate impostor count - allow up to floor((playerCount-1)/2) (impostors must be less than half)
-  // But ensure at least 1 impostor is possible
-  const maxImpostors = Math.max(1, Math.floor((playerCount - 1) / 2));
-  const actualImpostorCount = Math.min(impostorCount, maxImpostors);
-  
-  // Add impostors
-  for (let i = 0; i < actualImpostorCount; i++) {
-    roles.push('impostor');
+): { roles: PlayerRole[], jesterCluePlayerIds: string[] } {
+  const assignments = new Map<string, PlayerRole>();
+  let jesterCluePlayerIds: string[] = [];
+
+  // 1. Separate playing players from spectators
+  const playingPlayers = players.filter(p => p.role !== 'spectator');
+  players.filter(p => p.role === 'spectator').forEach(p => assignments.set(p.id, 'spectator'));
+
+  // Create a mutable array of players to assign roles from, and shuffle it
+  let unassignedPlayers = [...playingPlayers].sort(() => 0.5 - Math.random());
+
+  // 2. Assign Impostors
+  for (let i = 0; i < impostorCount; i++) {
+    const player = unassignedPlayers.pop();
+    if (player) {
+      assignments.set(player.id, 'impostor');
+    }
   }
-  
-  // Add jester if enabled and we have enough players (5+)
-  if (hasJester && playerCount >= 5) {
-    roles.push('jester');
+
+  // At this point, `unassignedPlayers` contains only non-impostors
+  const nonImpostors = unassignedPlayers;
+
+  // 3. Assign Jester and determine clue recipients (if applicable)
+  if (hasJester && nonImpostors.length > 0) {
+    // Determine how many players get the clue
+    const clueCount = Math.max(1, Math.floor(nonImpostors.length / 2));
+    
+    // The nonImpostors are already shuffled, so we can slice from the start
+    const clueRecipients = nonImpostors.slice(0, clueCount);
+    jesterCluePlayerIds = clueRecipients.map(p => p.id);
+
+    // From that clue group, randomly select the Jester
+    const jesterIndex = Math.floor(Math.random() * clueRecipients.length);
+    const jesterPlayer = clueRecipients[jesterIndex];
+    assignments.set(jesterPlayer.id, 'jester');
+
+    // All other non-impostors are Innocent
+    nonImpostors.forEach(player => {
+      if (player.id !== jesterPlayer.id) {
+        assignments.set(player.id, 'innocent');
+      }
+    });
+
+  } else {
+    // No jester, all remaining players are innocent
+    nonImpostors.forEach(player => {
+      assignments.set(player.id, 'innocent');
+    });
   }
-  
-  // Fill remaining slots with innocent players
-  const remainingSlots = playerCount - roles.length;
-  for (let i = 0; i < remainingSlots; i++) {
-    roles.push('innocent');
-  }
-  
-  // Shuffle roles
-  for (let i = roles.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [roles[i], roles[j]] = [roles[j], roles[i]];
-  }
-  
-  // Create a map of playing players to their assigned roles
-  const roleMap: Record<string, PlayerRole> = {};
-  playingPlayers.forEach((player, index) => {
-    roleMap[player.id] = roles[index];
-  });
-  
-  // Return roles for all players, keeping spectators as spectators
-  return players.map(player => 
-    player.role === 'spectator' ? 'spectator' : roleMap[player.id]
-  );
+
+  // 4. Create the final ordered list of roles
+  const finalRoles = players.map(player => assignments.get(player.id) || 'innocent');
+
+  return { roles: finalRoles, jesterCluePlayerIds };
 }
 
 export function getRandomImpostorCount(playerCount: number): number {

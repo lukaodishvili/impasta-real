@@ -300,12 +300,8 @@ export default function ResultsScreen({
                           className={`w-full h-full object-cover ${isEliminated ? 'blur-sm' : ''}`}
                         />
                       </div>
-                    ) : player.avatar ? (
-                      <div className={`w-12 h-12 ${player.avatar} rounded-full flex items-center justify-center ${isEliminated ? 'blur-sm' : ''}`}>
-                        <User className="w-6 h-6 text-white" />
-                      </div>
                     ) : (
-                      <div className={`w-12 h-12 bg-gradient-to-br from-gray-500 to-gray-600 rounded-full flex items-center justify-center ${isEliminated ? 'blur-sm' : ''}`}>
+                      <div className={`w-12 h-12 ${player.avatar || 'bg-gradient-to-br from-gray-500 to-gray-600'} rounded-full flex items-center justify-center ${isEliminated ? 'blur-sm' : ''}`}>
                         <User className="w-6 h-6 text-white" />
                       </div>
                     )}

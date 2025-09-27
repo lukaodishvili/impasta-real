@@ -288,10 +288,10 @@ const AnswerDisplayScreen: React.FC<AnswerDisplayScreenProps> = ({
                 <span className="text-2xl">❓</span>
               </div>
               <h2 className="text-xl font-bold text-white mb-4">
-                {t.question}:
+                {gameState.gameMode === 'words' ? 'Word:' : t.question}:
               </h2>
               <p className="text-lg text-white leading-relaxed break-words hyphens-auto">
-                {gameState.currentQuestion}
+                {gameState.gameMode === 'words' ? gameState.currentWord : gameState.currentQuestion}
               </p>
             </div>
           </div>

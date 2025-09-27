@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Clock, Send, AlertCircle, CheckCircle } from 'lucide-react';
+import { Clock, Send, AlertCircle, CheckCircle, MessageCircle } from 'lucide-react';
 import { GameState, Language } from '../types';
-import { getTestQuestionPack } from '../data/testQuestionPacks';
 
 interface QuestionScreenProps {
   gameState: GameState;
@@ -16,7 +15,7 @@ export default function QuestionScreen({
   onSubmitAnswer,
   language
 }: QuestionScreenProps) {
-  const { selectedQuestionPack, players, playerRoles, jesterCluePlayers, currentQuestion, currentImpostorQuestion } = gameState;
+  const { players, playerRoles, jesterCluePlayers } = gameState;
   const currentPlayer = players.find(p => p.username === currentUsername);
   
   // Check if current player is a spectator - they shouldn't see this screen
@@ -32,29 +31,58 @@ export default function QuestionScreen({
   }
   
   const playerRole = playerRoles[currentPlayer?.id || ''] || 'innocent';
-  
-  // Get the question pack and role-specific question
-  const questionPack = selectedQuestionPack ? getTestQuestionPack(selectedQuestionPack.id) : null;
-  const question = playerRole === 'impostor' ? currentImpostorQuestion : currentQuestion;
+
+  // Get role-specific question/word
+  const question = playerRole === 'impostor' ? gameState.currentImpostorQuestion : gameState.currentQuestion;
+  // For word game mode, all players see their own word
+  const word = gameState.gameMode === 'words' ? gameState.currentWord : (playerRole === 'impostor' ? gameState.currentImpostorWord : gameState.currentWord);
+
   
   // Check if current player should see jester clue
   const shouldShowJesterClue = jesterCluePlayers?.includes(currentPlayer?.id || '') || false;
 
   const [answer, setAnswer] = useState('');
   const [timeLeft, setTimeLeft] = useState(120); // 2 minutes
-  const [submitted, setSubmitted] = useState(false);
+  const [submitted, setSubmitted] = useState(false); // Start with false, will be set to true for word mode after word is shown
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Word game timer (1 minute)
+  const [wordGameTimeLeft, setWordGameTimeLeft] = useState(60);
+  const [wordGameTimerRunning, setWordGameTimerRunning] = useState(false);
+
+  // Auto-set submitted and start timer for word game mode
+  useEffect(() => {
+    if (gameState.gameMode === 'words' && !submitted) {
+      setSubmitted(true);
+      // Start the timer automatically
+      setWordGameTimerRunning(true);
+    }
+  }, [gameState.gameMode, submitted]);
+
+  // Handle proceed to discussion for word game
+  const handleProceedToDiscussion = useCallback(() => {
+    setWordGameTimerRunning(false);
+    const event = new CustomEvent('navigateToDiscussion');
+    window.dispatchEvent(event);
+  }, []);
+
+
   const handleSubmit = useCallback(async () => {
+    // Word game mode - mark as submitted (no actual submission needed)
+    if (gameState.gameMode === 'words') {
+      setSubmitted(true);
+      return;
+    }
+
     if (answer.trim() && !submitted && !isSubmitting) {
       try {
         setIsSubmitting(true);
         setError(null);
-        
+
         // Simulate potential network delay or error
         await new Promise(resolve => setTimeout(resolve, 500));
-        
+
         onSubmitAnswer(answer.trim());
         setSubmitted(true);
       } catch (err) {
@@ -64,27 +92,47 @@ export default function QuestionScreen({
         setIsSubmitting(false);
       }
     }
-  }, [answer, submitted, isSubmitting, onSubmitAnswer]);
+  }, [gameState.gameMode, answer, submitted, isSubmitting, onSubmitAnswer]);
 
-  // Timer countdown
+  // Timer countdown - Only for questions mode
   useEffect(() => {
-    if (timeLeft > 0 && !submitted) {
+    if (gameState.gameMode === 'questions' && timeLeft > 0 && !submitted) {
       const timer = setTimeout(() => setTimeLeft(timeLeft - 1), 1000);
       return () => clearTimeout(timer);
-    } else if (timeLeft === 0 && !submitted) {
-      // Auto-submit when timer runs out
+    } else if (gameState.gameMode === 'questions' && timeLeft === 0 && !submitted) {
+      // Auto-submit when timer runs out (only for questions mode)
       handleSubmit();
     }
-  }, [timeLeft, submitted, handleSubmit]);
+  }, [gameState.gameMode, timeLeft, submitted, handleSubmit]);
 
-  // Auto-submit all remaining answers when timer runs out (including bots)
+  // Word game timer and auto-navigation
   useEffect(() => {
-    if (timeLeft === 0) {
+    if (gameState.gameMode === 'words' && wordGameTimerRunning && wordGameTimeLeft > 0) {
+      const timer = setTimeout(() => {
+        setWordGameTimeLeft(prev => {
+          if (prev <= 1) {
+            // Auto-navigate to discussion screen
+            setWordGameTimerRunning(false);
+            // Navigate to discussion screen
+            const event = new CustomEvent('navigateToDiscussion');
+            window.dispatchEvent(event);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [gameState.gameMode, wordGameTimerRunning, wordGameTimeLeft]);
+
+  // Auto-submit all remaining answers when timer runs out (including bots) - Only for questions mode
+  useEffect(() => {
+    if (gameState.gameMode === 'questions' && timeLeft === 0 && !submitted) {
       // This will trigger auto-submission of all remaining answers
       const event = new CustomEvent('forceSubmitAllAnswers');
       window.dispatchEvent(event);
     }
-  }, [timeLeft]);
+  }, [gameState.gameMode, timeLeft, submitted]);
 
   const texts = {
     en: {
@@ -166,19 +214,33 @@ export default function QuestionScreen({
           </h1>
           <p className="text-lg mb-6" style={{ color: '#D1D5DB' }}>Answer the question and find the impostors</p>
           
-          {/* Timer */}
-          <div className="backdrop-blur-sm rounded-2xl p-4 border shadow-2xl inline-block" style={{ backgroundColor: 'rgba(59, 130, 246, 0.1)', borderColor: 'rgba(59, 130, 246, 0.3)' }}>
-            <div className="flex items-center justify-center gap-3 text-white">
-              <Clock className="w-5 h-5" />
-              <span className="text-lg font-medium">
-                {t.timeRemaining}: {formatTime(timeLeft)}
-              </span>
+          {/* Timer - Show for both modes but positioned differently */}
+          {gameState.gameMode === 'questions' && (
+            <div className="backdrop-blur-sm rounded-2xl p-4 border shadow-2xl inline-block" style={{ backgroundColor: 'rgba(59, 130, 246, 0.1)', borderColor: 'rgba(59, 130, 246, 0.3)' }}>
+              <div className="flex items-center justify-center gap-3 text-white">
+                <Clock className="w-5 h-5" />
+                <span className="text-lg font-medium">
+                  {t.timeRemaining}: {formatTime(timeLeft)}
+                </span>
+              </div>
             </div>
-          </div>
+          )}
+
+          {/* Word game timer - shown at top */}
+          {gameState.gameMode === 'words' && wordGameTimerRunning && (
+            <div className="backdrop-blur-sm rounded-2xl p-4 border shadow-2xl inline-block" style={{ backgroundColor: 'rgba(59, 130, 246, 0.1)', borderColor: 'rgba(59, 130, 246, 0.3)' }}>
+              <div className="flex items-center justify-center gap-3 text-white">
+                <Clock className="w-5 h-5" />
+                <span className="text-lg font-medium">
+                  Time Remaining: {Math.floor(wordGameTimeLeft / 60)}:{(wordGameTimeLeft % 60).toString().padStart(2, '0')}
+                </span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Jester Clue Card */}
-        {shouldShowJesterClue && playerRole !== 'jester' && (
+        {shouldShowJesterClue && (
           <div className="backdrop-blur-sm rounded-3xl p-6 mb-8 border shadow-2xl" style={{ backgroundColor: 'rgba(245, 158, 11, 0.1)', borderColor: 'rgba(245, 158, 11, 0.3)' }}>
             <div className="flex items-center gap-4">
               <div className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center shadow-lg">
@@ -192,28 +254,34 @@ export default function QuestionScreen({
           </div>
         )}
 
-        {/* Question Card */}
+        {/* Question/Word Card */}
         <div className="backdrop-blur-sm rounded-3xl p-6 mb-8 border shadow-2xl" style={{ backgroundColor: 'rgba(168, 85, 247, 0.1)', borderColor: 'rgba(168, 85, 247, 0.3)' }}>
           <div className="text-center mb-6">
-            <h2 className="text-xl font-bold text-white mb-4">{t.yourQuestion}</h2>
+            <h2 className="text-xl font-bold text-white mb-4">
+              {gameState.gameMode === 'words' ? 'Your Word' : t.yourQuestion}
+            </h2>
             <div className="w-16 h-1 bg-gradient-to-r from-red-400 to-orange-400 rounded-full mx-auto"></div>
           </div>
-          
-          {question ? (
+
+          {gameState.gameMode === 'words' ? (
+            // Word Game Mode - just display the word
             <div className="bg-gray-700/50 border border-gray-600/50 rounded-xl p-6">
-              <p className="text-center text-xl text-white leading-relaxed break-words hyphens-auto">
-                "{question}"
+              <p className="text-center text-2xl font-bold text-white leading-relaxed break-words hyphens-auto">
+                "{word || 'Loading word...'}"
               </p>
             </div>
           ) : (
+            // Questions Game Mode - display question
             <div className="bg-gray-700/50 border border-gray-600/50 rounded-xl p-6">
-              <p className="text-center text-gray-400 text-lg">Loading question...</p>
+              <p className="text-center text-xl text-white leading-relaxed break-words hyphens-auto">
+                "{question || 'Loading question...'}"
+              </p>
             </div>
           )}
         </div>
 
-        {/* Answer Input Card */}
-        {!submitted ? (
+        {/* Answer Input Card - Only show for Questions mode */}
+        {gameState.gameMode === 'questions' && !submitted ? (
           <div className="backdrop-blur-sm rounded-3xl p-6 mb-8 border shadow-2xl" style={{ backgroundColor: 'rgba(16, 185, 129, 0.1)', borderColor: 'rgba(16, 185, 129, 0.3)' }}>
             <div className="space-y-6">
               <textarea
@@ -272,13 +340,27 @@ export default function QuestionScreen({
             </div>
           </div>
         ) : (
-          <div className="backdrop-blur-sm rounded-3xl p-8 mb-8 border shadow-2xl text-center" style={{ backgroundColor: 'rgba(16, 185, 129, 0.1)', borderColor: 'rgba(16, 185, 129, 0.3)' }}>
-            <div className="w-16 h-16 bg-white/20 backdrop-blur-sm rounded-2xl flex items-center justify-center shadow-lg mx-auto mb-4">
-              <CheckCircle className="w-8 h-8 text-green-400" />
+          // Word game mode - show button and timer
+          gameState.gameMode === 'words' ? (
+            <div className="backdrop-blur-sm rounded-3xl p-8 mb-8 border shadow-2xl text-center" style={{ backgroundColor: 'rgba(16, 185, 129, 0.1)', borderColor: 'rgba(16, 185, 129, 0.3)' }}>
+              {/* Proceed Button */}
+              <button
+                onClick={handleProceedToDiscussion}
+                className="w-full bg-gradient-to-r from-green-500 to-emerald-500 text-white py-4 rounded-xl shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-300 flex items-center justify-center space-x-3 font-semibold text-lg"
+              >
+                <MessageCircle className="w-6 h-6" />
+                <span>Proceed To Discussion</span>
+              </button>
             </div>
-            <h3 className="text-xl font-bold text-green-300 mb-3">{t.submitted}</h3>
-            <p className="text-green-200/80 text-lg">{t.waitingForOthers}</p>
-          </div>
+          ) : (
+            <div className="backdrop-blur-sm rounded-3xl p-8 mb-8 border shadow-2xl text-center" style={{ backgroundColor: 'rgba(16, 185, 129, 0.1)', borderColor: 'rgba(16, 185, 129, 0.3)' }}>
+              <div className="w-16 h-16 bg-white/20 backdrop-blur-sm rounded-2xl flex items-center justify-center shadow-lg mx-auto mb-4">
+                <CheckCircle className="w-8 h-8 text-green-400" />
+              </div>
+              <h3 className="text-xl font-bold text-green-300 mb-3">{t.submitted}</h3>
+              <p className="text-green-200/80 text-lg">{t.waitingForOthers}</p>
+            </div>
+          )
         )}
       </div>
     </div>

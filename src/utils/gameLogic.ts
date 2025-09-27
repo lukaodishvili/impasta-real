@@ -1,54 +1,26 @@
 import { Player, GameState, PlayerRole, WinnerType } from '../types';
 import { assignRoles, getRandomImpostorCount } from './gameUtils';
 
-/**
- * Generate jester clues for non-impostor players
- * Shows "you might be a jester" to N/2 randomly selected non-impostor players
- * where N = total number of non-impostor players
- */
-export function generateJesterClues(
-  players: Player[], 
-  playerRoles: Record<string, PlayerRole>,
-  hasJester: boolean
-): string[] {
-  if (!hasJester || !players || players.length === 0) return [];
-  
-  // Get all non-impostor player IDs (exclude spectators)
-  const nonImpostorPlayers = players
-    .filter(player => player && player.id && playerRoles[player.id] !== 'impostor' && playerRoles[player.id] !== 'spectator')
-    .map(player => player.id);
-  
-  // If there are 2 or fewer non-impostors, no clues
-  if (nonImpostorPlayers.length <= 2) return [];
-  
-  // Calculate how many players should get clues (N/2)
-  const clueCount = Math.floor(nonImpostorPlayers.length / 2);
-  
-  // Shuffle and select random players
-  const shuffled = [...nonImpostorPlayers].sort(() => Math.random() - 0.5);
-  return shuffled.slice(0, clueCount);
-}
-
 export function initializeGame(
   players: Player[],
   impostorCount: number | 'randomize',
   hasJester: boolean,
   gameMode: 'questions' | 'words',
+  isRandomizeMode: boolean, // Add this parameter
   customContent?: string[]
 ): GameState {
   const actualImpostorCount = impostorCount === 'randomize' 
     ? getRandomImpostorCount(players.length)
     : impostorCount;
 
-  const roles = assignRoles(players, actualImpostorCount, hasJester);
+  const { roles, jesterCluePlayerIds } = assignRoles(players, actualImpostorCount, hasJester);
   const playerRoles: Record<string, PlayerRole> = {};
   
-  players.forEach((player, index) => {
-    playerRoles[player.id] = roles[index];
+  const updatedPlayers = players.map((player, index) => {
+    const role = roles[index];
+    playerRoles[player.id] = role;
+    return { ...player, role };
   });
-
-  // Generate jester clues
-  const jesterCluePlayers = generateJesterClues(players, playerRoles, hasJester);
 
   // Generate content based on game mode
   let currentQuestion: string | undefined;
@@ -75,21 +47,19 @@ export function initializeGame(
 
   return {
     phase: 'questions',
-    players: players.map((player, index) => ({
-      ...player,
-      role: roles[index]
-    })),
+    players: updatedPlayers,
     currentRound: 1,
-    maxRounds: 1,
+    maxRounds: 5, // Increased maxRounds
     impostorCount: actualImpostorCount,
     hasJester,
-    isRandomizeMode: false,
+    isRandomizeMode, // Use the parameter here
     hostId: players.find(p => p.isHost)?.id || '',
     roomCode: '',
     gameMode,
     currentQuestion: currentQuestion || '',
     currentImpostorQuestion: currentImpostorQuestion || '',
     currentWord: currentWord || '',
+    currentImpostorWord: '',
     playerAnswers: {},
     submittedAnswers: {}, // Initialize empty submitted answers tracking
     votes: {},
@@ -99,7 +69,7 @@ export function initializeGame(
     playerRoles,
     selectedPack: null, // Will be set by the caller
     selectedPackType: null, // Will be set by the caller
-    jesterCluePlayers,
+    jesterCluePlayers: jesterCluePlayerIds,
     startingPlayer: null,
     turnOrder: [],
     currentTurnPlayer: null,
@@ -176,18 +146,21 @@ export function checkWinConditions(
   
   const { playerRoles, isRandomizeMode } = gameState;
   
-  // PRIORITY 1: Check if jester was eliminated - jester wins immediately
-  const eliminatedJester = eliminatedPlayerIds.find(
-    playerId => playerRoles[playerId] === 'jester'
-  );
-  
-  if (eliminatedJester) {
-    const jesterPlayer = players.find(p => p.id === eliminatedJester);
-    console.log('✅ JESTER WIN: Jester was eliminated');
-    return {
-      winners: jesterPlayer ? [jesterPlayer] : [],
-      winnerType: 'jester'
-    };
+  // PRIORITY 1: Check if jester was eliminated - jester wins immediately (NOT in Randomize mode)
+  // Note: Jester is automatically disabled in Randomize mode
+  if (!isRandomizeMode) {
+    const eliminatedJester = eliminatedPlayerIds.find(
+      playerId => playerRoles[playerId] === 'jester'
+    );
+    
+    if (eliminatedJester) {
+      const jesterPlayer = players.find(p => p.id === eliminatedJester);
+      console.log('✅ JESTER WIN: Jester was eliminated');
+      return {
+        winners: jesterPlayer ? [jesterPlayer] : [],
+        winnerType: 'jester'
+      };
+    }
   }
 
   // Get all eliminated players (including previous eliminations)
@@ -202,7 +175,7 @@ export function checkWinConditions(
   const activeImpostors = activePlayers.filter(p => playerRoles[p.id] === 'impostor');
   const activeInnocents = activePlayers.filter(p => playerRoles[p.id] === 'innocent');
   
-  // Get eliminated innocents for Randomize mode tie logic
+  // Get eliminated innocents for logging
   const eliminatedInnocents = allEliminatedPlayerIds.filter(
     id => playerRoles[id] === 'innocent'
   );
@@ -254,38 +227,13 @@ export function checkWinConditions(
   }
 
 
-  // PRIORITY 3: Check if all impostors are eliminated (Randomize mode only)
-  if (activeImpostors.length === 0 && isRandomizeMode) {
-    console.log('All impostors eliminated - checking Randomize mode win conditions');
-    
-    // Randomize mode: check specific tie conditions per PRD
-    if (eliminatedInnocents.length === 1) {
-      // PRD 55: 1 innocent + all impostors eliminated = tie game
-      console.log('✅ TIE: 1 innocent + all impostors eliminated (Randomize mode)');
-      return {
-        winners: [],
-        winnerType: 'tie'
-      };
-    } else if (eliminatedInnocents.length >= 2) {
-      // PRD 56: 2+ innocents + all impostors eliminated = impostors win
-      // In Randomize mode, impostors win by achieving their goal (causing enough innocent eliminations)
-      // even if they were eliminated themselves
-      const impostorPlayers = players.filter(p => 
-        playerRoles[p.id] === 'impostor'
-      );
-      console.log('✅ IMPOSTOR WIN: 2+ innocents + all impostors eliminated (Randomize mode)');
-      return {
-        winners: impostorPlayers,
-        winnerType: 'impostor'
-      };
-    } else {
-      // PRD 57: Only impostors eliminated = innocents win
-      console.log('✅ INNOCENT WIN: Only impostors eliminated (Randomize mode)');
-      return {
-        winners: activeInnocents,
-        winnerType: 'innocent'
-      };
-    }
+  // PRIORITY 3: Randomize mode - Game only ends when host presses "Finish Game"
+  // This function is called during voting, but in Randomize mode, the game continues
+  // until the host explicitly ends it. The actual win determination happens in
+  // the VoteResultsScreen when host clicks "Finish Game"
+  if (isRandomizeMode) {
+    console.log('Randomize mode: Game continues until host ends it');
+    return { winners: [] }; // No automatic win condition
   }
 
   // PRIORITY 4: Check if too few players remain - impostors win
@@ -355,7 +303,8 @@ export function processVotes(
     ...gameState,
     eliminatedPlayers: [...gameState.eliminatedPlayers, ...eliminatedPlayerIds],
     votes,
-    phase: 'discussion'
+    phase: 'discussion',
+    currentRound: gameState.currentRound + 1 // Increment round
   };
 }
 
@@ -636,4 +585,48 @@ export function determineWinner(
   eliminatedPlayerIds: string[]
 ): { winners: Player[]; winnerType?: WinnerType } {
   return checkWinConditions(gameState, players, eliminatedPlayerIds);
+}
+
+/**
+ * Determines the winner when host finishes the game in Randomize mode
+ * This is called when the host presses "Finish Game" button
+ */
+export function determineRandomizeWinner(
+  gameState: GameState,
+  players: Player[]
+): { winners: Player[]; winnerType?: WinnerType } {
+  console.log('=== RANDOMIZE MODE FINAL WINNER DETERMINATION ===');
+  
+  const { playerRoles, eliminatedPlayers } = gameState;
+  
+  // Find all players for each team
+  const allImpostorPlayers = players.filter(p => playerRoles[p.id] === 'impostor');
+  const allInnocentPlayers = players.filter(p => playerRoles[p.id] === 'innocent');
+
+  // Find active (not eliminated) impostors
+  const activeImpostors = allImpostorPlayers.filter(p => !eliminatedPlayers.includes(p.id));
+
+  console.log('Final state for winner determination:', {
+    totalPlayers: players.length,
+    eliminatedPlayerIds: eliminatedPlayers,
+    playerRoles,
+    activeImpostorCount: activeImpostors.length,
+    allImpostorIds: allImpostorPlayers.map(p => p.id)
+  });
+
+  // If any impostor is still alive when the host ends the game, the impostor team wins.
+  if (activeImpostors.length > 0) {
+    console.log('✅ IMPOSTOR WIN: Impostors were still alive when host finished game.');
+    return {
+      winners: allImpostorPlayers, // The whole team wins
+      winnerType: 'impostor'
+    };
+  } else {
+    // If all impostors are eliminated, the innocent team wins.
+    console.log('✅ INNOCENT WIN: All impostors were eliminated when host finished game.');
+    return {
+      winners: allInnocentPlayers,
+      winnerType: 'innocent'
+    };
+  }
 }

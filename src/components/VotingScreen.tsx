@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { GameState } from '../types';
 import { generateBotVotes } from '../utils/botUtils';
+import { generateWordsGameBotVotes } from '../utils/wordsGameLogic';
 import { User, Vote, Clock, MessageCircle, Play } from 'lucide-react';
-import { clsx } from 'clsx';
 
 interface VotingScreenProps {
   gameState: GameState;
@@ -66,16 +66,10 @@ export default function VotingScreen({
     }
   }, [gameState.isTieVote, gameState.tiedPlayers]);
 
-  const votesNeeded = gameState.isRandomizeMode || gameState.isTieVote ? 1 : gameState.impostorCount;
-
-  // Memoize main content
-  const mainContent = useMemo(() => {
-    if (gameState.gameMode === 'questions') {
-      return gameState.currentQuestion || 'No question available';
-    } else {
-      return `Word: ${gameState.currentWord || 'No word available'}`;
-    }
-  }, [gameState.gameMode, gameState.currentQuestion, gameState.currentWord]);
+  // For words game, use standard mode logic (no randomize, but tie votes are allowed)
+  const votesNeeded = gameState.gameMode === 'words' 
+    ? (gameState.isTieVote ? 1 : (gameState.impostorCount - gameState.eliminatedPlayers.length))
+    : (gameState.isRandomizeMode || gameState.isTieVote ? 1 : (gameState.impostorCount - gameState.eliminatedPlayers.length));
 
   // Memoize votable players for rendering
   const votablePlayers = useMemo(() => {
@@ -131,65 +125,158 @@ export default function VotingScreen({
     return () => clearInterval(timer);
   }, [votingStarted, handleStartVoting]);
 
-  // Bot voting - only when voting starts, with proper dependencies
+  // Bot voting - INSTANT VOTING
+  useEffect(() => {
+    // Only run if voting has started
+    if (!votingStarted) return;
+
+    // Determine which players are eligible to cast a vote.
+    const eligibleVoters = gameState.players.filter(p => !p.isEliminated);
+    
+    // Find ALL bots that need to vote (not just ones that haven't voted yet)
+    const allBots = eligibleVoters.filter(player =>
+      (player.isBot || player.username.startsWith('Bot_'))
+    );
+    
+    console.log('VotingScreen INSTANT bot voting:', {
+      eligibleVoters: eligibleVoters.length,
+      allBots: allBots.length,
+      botIds: allBots.map(b => ({ id: b.id, username: b.username, isBot: b.isBot })),
+      currentVotes: Object.keys(gameState.votes),
+      votesNeeded
+    });
+    
+    if (allBots.length === 0) return;
+
+    // Generate and submit votes for ALL bots INSTANTLY
+    allBots.forEach((bot) => {
+      // Skip if bot already voted
+      if (gameState.votes[bot.id]) {
+        console.log(`VotingScreen: Bot ${bot.username} already voted, skipping`);
+        return;
+      }
+
+      // The list of players a bot can vote FOR is also the active (non-eliminated) players.
+      const targetablePlayers = gameState.players.filter(p => !p.isEliminated);
+
+      // Use words game bot voting for words game mode
+      const botVotes = gameState.gameMode === 'words' 
+        ? generateWordsGameBotVotes(
+            bot.id,
+            targetablePlayers,
+            votesNeeded,
+            bot.personality || 'random',
+            gameState.isTieVote ? gameState.tiedPlayers : undefined,
+            gameState
+          )
+        : generateBotVotes(
+            bot.id,
+            targetablePlayers,
+            votesNeeded,
+            bot.personality || 'random',
+            gameState.isTieVote ? gameState.tiedPlayers : undefined
+          );
+
+      console.log(`VotingScreen: Bot ${bot.username} (${bot.id}) generated votes:`, botVotes);
+
+      // If no votes were generated (empty array), force the bot to vote for someone
+      let finalVotes = botVotes;
+      if (botVotes.length === 0 && targetablePlayers.length > 0) {
+        finalVotes = [targetablePlayers[0].id]; // Force vote for the first eligible player
+        console.log(`VotingScreen: Bot ${bot.username} had no votes, forcing vote for:`, finalVotes);
+      }
+
+      console.log(`VotingScreen: INSTANTLY calling onBotVote for ${bot.username} with votes:`, finalVotes);
+      onBotVote(bot.id, finalVotes);
+    });
+
+  }, [
+    votingStarted, 
+    gameState.isTieVote, 
+    gameState.players, 
+    onBotVote, 
+    votesNeeded, 
+    gameState.tiedPlayers,
+    gameState.gameMode
+  ]);
+
+  // BACKUP: Force all bots to vote after a short delay to ensure no bots are left behind
   useEffect(() => {
     if (!votingStarted) return;
 
-    const activePlayers = gameState.players.filter(p => !p.isEliminated);
-    
-    // Only vote for bots that haven't voted yet and are not eliminated
-    const bots = activePlayers.filter(player => 
-      (player.isBot || player.username.startsWith('Bot_')) && 
-      !gameState.votes[player.id]
-    );
-    
-    if (bots.length === 0) return;
-
-    console.log('VotingScreen - Bot voting for:', bots.map(b => b.username));
-
-    // Generate all bot votes immediately - no delays
-    bots.forEach((bot) => {
-      const botVotes = generateBotVotes(
-        bot.id,
-        activePlayers,
-        votesNeeded,
-        bot.personality || 'random',
-        gameState.isTieVote ? gameState.tiedPlayers : undefined
+    const forceBotVotingTimeout = setTimeout(() => {
+      const eligibleVoters = gameState.players.filter(p => !p.isEliminated);
+      const botsThatStillNeedToVote = eligibleVoters.filter(player =>
+        (player.isBot || player.username.startsWith('Bot_')) &&
+        !gameState.votes[player.id]
       );
-      
-      // Vote immediately with no delay
-      onBotVote(bot.id, botVotes);
-    });
-  }, [votingStarted, votesNeeded, onBotVote, gameState.isTieVote, gameState.tiedPlayers, gameState.players.length, gameState.votes]);
 
-  // Additional immediate bot voting for tie-breaker scenarios
+      if (botsThatStillNeedToVote.length > 0) {
+        console.log('FORCE VOTING: Some bots still need to vote, forcing them now:', botsThatStillNeedToVote.map(b => b.username));
+        
+        botsThatStillNeedToVote.forEach((bot) => {
+          const targetablePlayers = gameState.players.filter(p => !p.isEliminated);
+          const botVotes = gameState.gameMode === 'words' 
+            ? generateWordsGameBotVotes(
+                bot.id,
+                targetablePlayers,
+                votesNeeded,
+                bot.personality || 'random',
+                gameState.isTieVote ? gameState.tiedPlayers : undefined,
+                gameState
+              )
+            : generateBotVotes(
+                bot.id,
+                targetablePlayers,
+                votesNeeded,
+                bot.personality || 'random',
+                gameState.isTieVote ? gameState.tiedPlayers : undefined
+              );
+
+          let finalVotes = botVotes;
+          if (botVotes.length === 0 && targetablePlayers.length > 0) {
+            finalVotes = [targetablePlayers[0].id];
+          }
+
+          console.log(`FORCE VOTING: Bot ${bot.username} forced to vote:`, finalVotes);
+          onBotVote(bot.id, finalVotes);
+        });
+      }
+    }, 1000); // Force after 1 second
+
+    return () => clearTimeout(forceBotVotingTimeout);
+  }, [votingStarted, gameState.players, gameState.votes, onBotVote, votesNeeded, gameState.isTieVote, gameState.tiedPlayers, gameState.gameMode]);
+
+  // AUTO-PROCESS: Check if all players have voted and auto-process if so
   useEffect(() => {
-    if (!votingStarted || !gameState.isTieVote) return;
+    if (!votingStarted) return;
 
-    const activePlayers = gameState.players.filter(p => !p.isEliminated);
-    
-    const bots = activePlayers.filter(player => 
-      (player.isBot || player.username.startsWith('Bot_')) && 
-      !gameState.votes[player.id]
+    const eligibleVoters = gameState.players.filter(p => !p.isEliminated);
+    const nonSpectatorPlayers = eligibleVoters.filter(p => 
+      gameState.selectedPackType !== 'custom' || p.role !== 'spectator'
     );
-    
-    if (bots.length === 0) return;
+    const playersWhoVoted = Object.keys(gameState.votes);
+    const playersWhoHaventVoted = nonSpectatorPlayers.filter(p => !playersWhoVoted.includes(p.id));
 
-    console.log('VotingScreen - Immediate tie-breaker bot voting for:', bots.map(b => b.username));
-
-    // Vote immediately for tie-breaker
-    bots.forEach((bot) => {
-      const botVotes = generateBotVotes(
-        bot.id,
-        activePlayers,
-        votesNeeded, // Tie-breaker needs (N-M) votes
-        bot.personality || 'random',
-        gameState.tiedPlayers
-      );
-      
-      onBotVote(bot.id, botVotes);
+    console.log('VotingScreen AUTO-PROCESS check:', {
+      eligibleVoters: eligibleVoters.length,
+      nonSpectatorPlayers: nonSpectatorPlayers.length,
+      playersWhoVoted: playersWhoVoted.length,
+      playersWhoHaventVoted: playersWhoHaventVoted.length,
+      allVotes: Object.keys(gameState.votes)
     });
-  }, [gameState.isTieVote, votingStarted, onBotVote, gameState.tiedPlayers, gameState.players.length, gameState.votes]);
+
+    // If all players have voted, auto-process the votes
+    if (playersWhoHaventVoted.length === 0 && nonSpectatorPlayers.length > 0) {
+      console.log('VotingScreen AUTO-PROCESS: All players have voted, auto-processing...');
+      // Trigger vote processing by calling onVote with user's selected votes
+      if (!submitted) {
+        setSubmitted(true);
+        console.log('VotingScreen AUTO-PROCESS: Calling onVote with selectedVotes:', selectedVotes);
+        onVote(selectedVotes); // Use the user's actual selected votes
+      }
+    }
+  }, [votingStarted, gameState.players, gameState.votes, gameState.selectedPackType, submitted, onVote]);
 
   // Stable vote toggle handler
   const handleVoteToggle = useCallback((playerId: string) => {
@@ -204,6 +291,13 @@ export default function VotingScreen({
       if (prev.includes(playerId)) {
         return prev.filter(id => id !== playerId);
       } else {
+        // For words game, use standard mode logic (multiple votes allowed unless tie vote)
+        if (gameState.gameMode === 'words') {
+          if (gameState.isTieVote) {
+            return [playerId]; // Only allow one selection in tie votes
+          }
+          return prev.length < votesNeeded ? [...prev, playerId] : prev;
+        }
         if (gameState.isRandomizeMode || gameState.isTieVote) {
           return [playerId]; // Only allow one selection
         }
@@ -214,9 +308,34 @@ export default function VotingScreen({
 
   // Stable submit handler
   const handleSubmit = useCallback(() => {
-    if (submitted || !votingStarted) return;
+    console.log('VotingScreen handleSubmit called:', {
+      submitted,
+      votingStarted,
+      selectedVotes,
+      votesNeeded,
+      gameMode: gameState.gameMode,
+      isTieVote: gameState.isTieVote
+    });
 
-    if (gameState.isRandomizeMode || gameState.isTieVote) {
+    if (submitted || !votingStarted) {
+      console.log('VotingScreen handleSubmit: Early return - submitted:', submitted, 'votingStarted:', votingStarted);
+      return;
+    }
+
+    // For words game, use standard mode logic (multiple votes required unless tie vote)
+    if (gameState.gameMode === 'words') {
+      if (gameState.isTieVote) {
+        if (selectedVotes.length !== 1) {
+          setError('You must vote for exactly one player.');
+          return;
+        }
+      } else {
+        if (selectedVotes.length !== votesNeeded) {
+          setError(`Please select exactly ${votesNeeded} player${votesNeeded > 1 ? 's' : ''} to vote for.`);
+          return;
+        }
+      }
+    } else if (gameState.isRandomizeMode || gameState.isTieVote) {
       if (selectedVotes.length !== 1) {
         setError('You must vote for exactly one player.');
         return;
@@ -230,20 +349,17 @@ export default function VotingScreen({
 
     // Prevent spectators from submitting votes in custom packs
     const currentPlayer = gameState.players.find(p => p.username === currentUsername);
-    if (gameState.selectedPackType === 'custom' && currentPlayer?.role === 'spectator') return;
+    if (gameState.selectedPackType === 'custom' && currentPlayer?.role === 'spectator') {
+      console.log('VotingScreen handleSubmit: Spectator cannot vote');
+      return;
+    }
 
-      setSubmitted(true);
+    console.log('VotingScreen handleSubmit: Calling onVote with selectedVotes:', selectedVotes);
+    setSubmitted(true);
     setError(null);
     onVote(selectedVotes);
-  }, [submitted, votingStarted, selectedVotes.length, votesNeeded, selectedVotes, onVote]);
+  }, [submitted, votingStarted, selectedVotes.length, votesNeeded, selectedVotes, onVote, gameState.gameMode, gameState.isTieVote, gameState.selectedPackType, currentUsername]);
 
-  // Memoize filtered players for rendering - exclude spectators for custom packs
-  const playersToShow = useMemo(() => 
-    gameState.players
-      .filter(p => !gameState.eliminatedPlayers.includes(p.id) && 
-                  (gameState.selectedPackType !== 'custom' || p.role !== 'spectator')),
-    [gameState.players, gameState.eliminatedPlayers, gameState.selectedPackType]
-  );
 
   // Check if current user is spectator
   const isSpectator = currentPlayer?.role === 'spectator';
@@ -321,17 +437,18 @@ export default function VotingScreen({
           </div>
             </div>
 
-        {/* Discussion Timer or Voting Progress */}
-        <div className="bg-gray-800/50 backdrop-blur-lg rounded-xl p-4 shadow-lg border border-gray-600/50 mb-6">
-          <div className="text-center">
-            {!votingStarted && !gameState.isTieVote ? (
-              <div className="flex items-center justify-center space-x-3">
-                <Clock className="w-6 h-6 text-blue-400" />
-                <p className="text-white text-lg font-semibold">
-                  Discussion Time: {discussionTimeLeft}s
-                </p>
-                <Clock className="w-6 h-6 text-blue-400" />
-              </div>
+        {/* Discussion Timer or Voting Progress - Only show for questions game */}
+        {gameState.gameMode === 'questions' && (
+          <div className="bg-gray-800/50 backdrop-blur-lg rounded-xl p-4 shadow-lg border border-gray-600/50 mb-6">
+            <div className="text-center">
+              {!votingStarted && !gameState.isTieVote ? (
+                <div className="flex items-center justify-center space-x-3">
+                  <Clock className="w-6 h-6 text-blue-400" />
+                  <p className="text-white text-lg font-semibold">
+                    Discussion Time: {discussionTimeLeft}s
+                  </p>
+                  <Clock className="w-6 h-6 text-blue-400" />
+                </div>
             ) : (() => {
               if (gameState.selectedPackType === 'custom' && isSpectator) {
                 return (
@@ -357,6 +474,7 @@ export default function VotingScreen({
             })()}
           </div>
         </div>
+        )}
 
         {/* Error Message */}
         {error && (
@@ -379,7 +497,7 @@ export default function VotingScreen({
             return (
             <div
               key={player.id}
-                  className={`relative p-4 rounded-xl border-2 transition-all transform duration-300 min-h-[200px] flex flex-col ${
+                  className={`relative ${gameState.gameMode === 'words' ? 'p-3 min-h-[160px]' : 'p-4 min-h-[200px]'} rounded-xl border-2 transition-all transform duration-300 flex flex-col ${
                     votingStarted 
                       ? (isSelected
                         ? 'bg-red-500/20 border-red-500/50 shadow-lg shadow-red-500/20'
@@ -391,9 +509,9 @@ export default function VotingScreen({
                   onClick={votingStarted && isEligible && player.id !== currentPlayerId && !submitted && !isSpectator ? () => handleVoteToggle(player.id) : undefined}
                 >
                   {/* Avatar */}
-                  <div className="relative mx-auto mb-3">
+                  <div className={`relative mx-auto ${gameState.gameMode === 'words' ? 'mb-2' : 'mb-3'}`}>
                 {player.avatar && player.avatar.startsWith('data:') ? (
-                      <div className="w-12 h-12 rounded-full overflow-hidden flex items-center justify-center">
+                      <div className={`${gameState.gameMode === 'words' ? 'w-10 h-10' : 'w-12 h-12'} rounded-full overflow-hidden flex items-center justify-center`}>
                   <img
                     src={player.avatar}
                           alt={`${player.username}'s avatar`}
@@ -401,22 +519,22 @@ export default function VotingScreen({
                   />
                       </div>
                 ) : player.avatar ? (
-                      <div className={`w-12 h-12 ${player.avatar} rounded-full flex items-center justify-center`}>
-                    <User className="w-6 h-6 text-white" />
+                      <div className={`${gameState.gameMode === 'words' ? 'w-10 h-10' : 'w-12 h-12'} ${player.avatar} rounded-full flex items-center justify-center`}>
+                    <User className={`${gameState.gameMode === 'words' ? 'w-5 h-5' : 'w-6 h-6'} text-white`} />
                   </div>
                 ) : (
-                      <div className="w-12 h-12 bg-gradient-to-br from-gray-500 to-gray-600 rounded-full flex items-center justify-center">
-                    <User className="w-6 h-6 text-white" />
+                      <div className={`${gameState.gameMode === 'words' ? 'w-10 h-10' : 'w-12 h-12'} bg-gradient-to-br from-gray-500 to-gray-600 rounded-full flex items-center justify-center`}>
+                    <User className={`${gameState.gameMode === 'words' ? 'w-5 h-5' : 'w-6 h-6'} text-white`} />
                       </div>
                     )}
                     {player.isHost && (
-                      <div className="absolute -top-1 -right-1 w-6 h-6 bg-yellow-400 rounded-full flex items-center justify-center">
-                        <span className="text-xs">👑</span>
+                      <div className={`absolute -top-1 -right-1 ${gameState.gameMode === 'words' ? 'w-5 h-5' : 'w-6 h-6'} bg-yellow-400 rounded-full flex items-center justify-center`}>
+                        <span className={`${gameState.gameMode === 'words' ? 'text-[10px]' : 'text-xs'}`}>👑</span>
                       </div>
                     )}
                     {isSelected && (
-                      <div className="absolute -top-1 -right-1 w-7 h-7 bg-red-500 rounded-full flex items-center justify-center">
-                        <span className="text-white text-sm font-bold">✓</span>
+                      <div className={`absolute -top-1 -right-1 ${gameState.gameMode === 'words' ? 'w-6 h-6' : 'w-7 h-7'} bg-red-500 rounded-full flex items-center justify-center`}>
+                        <span className={`text-white ${gameState.gameMode === 'words' ? 'text-xs' : 'text-sm'} font-bold`}>✓</span>
                   </div>
                 )}
               </div>
@@ -428,14 +546,16 @@ export default function VotingScreen({
               </h3>
                   </div>
                   
-                  {/* Answer Display */}
-                  <div className="flex-grow flex flex-col justify-center">
-                    <div className="text-xs text-gray-200 bg-black/20 rounded-2xl p-1.5 break-words leading-tight flex-grow flex items-center justify-center text-center overflow-hidden">
-                      <span className="block max-w-full">
-                        {gameState.playerAnswers[player.id] || 'No answer'}
-                      </span>
-                </div>
-                  </div>
+                  {/* Answer Display - Only show for questions game */}
+                  {gameState.gameMode === 'questions' && (
+                    <div className="flex-grow flex flex-col justify-center">
+                      <div className="text-xs text-gray-200 bg-black/20 rounded-2xl p-1.5 break-words leading-tight flex-grow flex items-center justify-center text-center overflow-hidden">
+                        <span className="block max-w-full">
+                          {gameState.playerAnswers[player.id] || 'No answer'}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                   
                   {votingStarted && !isEligible && (
                     <div className="mt-2 text-center">
