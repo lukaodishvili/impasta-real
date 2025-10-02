@@ -12,14 +12,21 @@ export function generatePlayerId(): string {
 export function assignRoles(
   players: { id: string; role: 'spectator' | string }[], 
   impostorCount: number = 1, 
-  hasJester: boolean = false
+  hasJester: boolean = false,
+  isRandomizeMode: boolean = false
 ): { roles: PlayerRole[], jesterCluePlayerIds: string[] } {
   const assignments = new Map<string, PlayerRole>();
   let jesterCluePlayerIds: string[] = [];
 
-  // 1. Separate playing players from spectators
-  const playingPlayers = players.filter(p => p.role !== 'spectator');
-  players.filter(p => p.role === 'spectator').forEach(p => assignments.set(p.id, 'spectator'));
+  // 1. In randomize mode, preserve spectators (eliminated players). In standard mode, all players get roles.
+  const playingPlayers = isRandomizeMode 
+    ? players.filter(p => p.role !== 'spectator')
+    : players;
+  const spectatorPlayers = isRandomizeMode 
+    ? players.filter(p => p.role === 'spectator')
+    : [];
+  
+  spectatorPlayers.forEach(p => assignments.set(p.id, 'spectator'));
 
   // Create a mutable array of players to assign roles from, and shuffle it
   let unassignedPlayers = [...playingPlayers].sort(() => 0.5 - Math.random());

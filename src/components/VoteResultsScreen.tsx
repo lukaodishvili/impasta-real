@@ -78,7 +78,21 @@ export default function VoteResultsScreen({
   
   const tieBreakerRounds = gameState.tieBreakerVotes || [];
   
-  const eliminatedThisRound = players.filter(p => eliminatedPlayers.includes(p.id) && !gameState.previousEliminatedPlayers?.includes(p.id));
+  // Get all eliminated players
+  // Exclude host spectators (in custom packs) but include player spectators (in randomize mode when eliminated)
+  const allEliminatedPlayers = players.filter(p => {
+    const isActuallyEliminated = eliminatedPlayers.includes(p.id) || p.isEliminated;
+    const isHostSpectator = gameState.selectedPackType === 'custom' && p.role === 'spectator' && p.isHost;
+    
+    return isActuallyEliminated && !isHostSpectator;
+  });
+  
+  // Get players eliminated in this round only
+  const eliminatedThisRound = players.filter(p => {
+    const isInEliminatedList = eliminatedPlayers.includes(p.id);
+    const wasNotPreviouslyEliminated = !gameState.previousEliminatedPlayers?.includes(p.id);
+    return isInEliminatedList && wasNotPreviouslyEliminated;
+  });
 
   return (
     <div className="min-h-screen p-4" style={{ backgroundColor: '#101721' }}>
@@ -99,16 +113,61 @@ export default function VoteResultsScreen({
           </h1>
         </div>
 
-        {eliminatedThisRound.length > 0 && (
+        {/* Eliminated Players Display - Only for Randomize Mode */}
+        {isRandomizeMode && allEliminatedPlayers.length > 0 && (
           <div className="backdrop-blur-sm rounded-3xl p-6 mb-8 border shadow-2xl" style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', borderColor: 'rgba(239, 68, 68, 0.3)' }}>
-            <h3 className="text-xl font-bold text-white mb-4 text-center">{t.eliminated}</h3>
-            <div className="space-y-2">
-              {eliminatedThisRound.map(player => (
-                <div key={player.id} className="flex items-center justify-center space-x-3 bg-red-500/20 p-3 rounded-xl">
-                  <Skull className="w-6 h-6 text-red-300" />
-                  <span className="font-bold text-lg text-red-200">{player.username}</span>
-                </div>
-              ))}
+            <h3 className="text-xl font-bold text-white mb-4 text-center">
+              {t.eliminated} ({allEliminatedPlayers.length})
+            </h3>
+            <div className="space-y-3">
+              {allEliminatedPlayers.map((player, index) => {
+                const isEliminatedThisRound = eliminatedThisRound.some(p => p.id === player.id);
+                
+                return (
+                  <div key={`eliminated-${player.id}-${index}`} className={`flex items-center space-x-4 p-4 rounded-xl border-2 transition-all ${
+                    isEliminatedThisRound 
+                      ? 'bg-red-500/30 border-red-400/60 animate-pulse shadow-lg' 
+                      : 'bg-red-500/20 border-red-500/40'
+                  }`}>
+                    {/* Elimination Order Number */}
+                    <div className="w-8 h-8 rounded-full bg-red-600 text-white text-sm font-bold flex items-center justify-center flex-shrink-0">
+                      {index + 1}
+                    </div>
+                    
+                    {/* Player Avatar with Skull Overlay */}
+                    <div className="relative flex-shrink-0">
+                      {player.avatar && player.avatar.startsWith('data:') ? (
+                        <img src={player.avatar} alt={player.username} className="w-12 h-12 rounded-full object-cover opacity-70" />
+                      ) : (
+                        <div className={`w-12 h-12 ${player.avatar || 'bg-gray-500'} rounded-full flex items-center justify-center opacity-70`}>
+                          <User className="w-7 h-7 text-white" />
+                        </div>
+                      )}
+                      {/* Skull overlay on profile picture */}
+                      <div className="absolute inset-0 bg-black/60 rounded-full flex items-center justify-center">
+                        <Skull className="w-6 h-6 text-red-400" />
+                      </div>
+                    </div>
+                    
+                    {/* Player Info */}
+                    <div className="flex-1 min-w-0">
+                      <div className="font-bold text-red-200 text-lg truncate line-through">
+                        {player.username}
+                      </div>
+                      {isEliminatedThisRound && (
+                        <div className="text-xs text-red-300 font-medium">
+                          Just eliminated
+                        </div>
+                      )}
+                    </div>
+                    
+                    {/* Elimination Status */}
+                    <div className="text-xs text-red-300 bg-red-500/30 px-2 py-1 rounded-full flex-shrink-0">
+                      Eliminated
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
@@ -123,7 +182,7 @@ export default function VoteResultsScreen({
                 if (!player) return null;
                 const isEliminated = eliminatedPlayers.includes(playerId);
                 return (
-                  <div key={playerId} className={`p-4 rounded-xl border-2 ${
+                  <div key={`main-vote-${playerId}-${index}`} className={`p-4 rounded-xl border-2 ${
                     isEliminated 
                       ? 'bg-red-500/20 border-red-500/50' 
                       : 'bg-gray-700/50 border-gray-600/50'
@@ -176,7 +235,7 @@ export default function VoteResultsScreen({
                   if (!player) return null;
                   const isEliminated = eliminatedPlayers.includes(playerId);
                   return (
-                    <div key={playerId} className={`p-4 rounded-xl border-2 ${
+                    <div key={`tiebreaker-${roundIndex}-${playerId}-${voteIndex}`} className={`p-4 rounded-xl border-2 ${
                       isEliminated 
                         ? 'bg-red-500/20 border-red-500/50' 
                         : 'bg-gray-700/50 border-gray-600/50'
@@ -217,12 +276,22 @@ export default function VoteResultsScreen({
           <div className="space-y-4">
             {isRandomizeMode ? (
               <>
-                {eliminatedPlayers.length < 4 && (
+                {/* Show continue button only if game can continue and host hasn't exceeded limit */}
+                {players.filter(p => {
+                  const isActivePlayer = !eliminatedPlayers.includes(p.id) && !p.isEliminated;
+                  const isHostSpectator = gameState.selectedPackType === 'custom' && p.role === 'spectator' && p.isHost;
+                  const isPlayerSpectator = p.role === 'spectator' && !p.isHost;
+                  
+                  // Count active players and host spectators (who can continue the game)
+                  // Don't count player spectators (eliminated players)
+                  return isActivePlayer || isHostSpectator;
+                }).length > 2 && 
+                 (gameState.continueCount || 0) < 3 && (
                   <button
                     onClick={onContinueRandomize}
                     className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-500 text-white font-semibold rounded-2xl shadow-lg hover:scale-105 transition-transform"
                   >
-                    {t.continueGame}
+{t.continueGame}
                   </button>
                 )}
                 <button

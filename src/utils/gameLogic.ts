@@ -6,14 +6,15 @@ export function initializeGame(
   impostorCount: number | 'randomize',
   hasJester: boolean,
   gameMode: 'questions' | 'words',
-  isRandomizeMode: boolean, // Add this parameter
-  customContent?: string[]
+  isRandomizeMode: boolean,
+  customContent?: string[],
+  selectedPackType?: string | null
 ): GameState {
   const actualImpostorCount = impostorCount === 'randomize' 
     ? getRandomImpostorCount(players.length)
     : impostorCount;
 
-  const { roles, jesterCluePlayerIds } = assignRoles(players, actualImpostorCount, hasJester);
+  const { roles, jesterCluePlayerIds } = assignRoles(players, actualImpostorCount, hasJester, isRandomizeMode);
   const playerRoles: Record<string, PlayerRole> = {};
   
   const updatedPlayers = players.map((player, index) => {
@@ -32,16 +33,18 @@ export function initializeGame(
       currentQuestion = customContent[0];
       currentImpostorQuestion = customContent[1];
     } else {
-      // Use pre-made question packs
-      currentQuestion = getRandomQuestion('normal');
-      currentImpostorQuestion = getRandomImpostorQuestion('normal');
+      // Use the selected pack type for questions, fallback to 'normal' if not specified
+      const packType = selectedPackType || 'normal';
+      currentQuestion = getRandomQuestion(packType);
+      currentImpostorQuestion = getRandomImpostorQuestion(packType);
     }
   } else {
     if (customContent && Array.isArray(customContent) && customContent.length >= 1) {
       currentWord = customContent[0];
     } else {
-      // Use pre-made word packs
-      currentWord = getRandomWord('celebrities');
+      // Use the selected pack type for words, fallback to 'celebrities' if not specified
+      const packType = selectedPackType || 'celebrities';
+      currentWord = getRandomWord(packType);
     }
   }
 
@@ -67,6 +70,8 @@ export function initializeGame(
     winners: [],
     winnerType: undefined,
     playerRoles,
+    originalPlayerRoles: { ...playerRoles }, // Store original roles before any eliminations
+    continueCount: 0, // Initialize continue count for randomize mode
     selectedPack: null, // Will be set by the caller
     selectedPackType: null, // Will be set by the caller
     jesterCluePlayers: jesterCluePlayerIds,
@@ -227,13 +232,47 @@ export function checkWinConditions(
   }
 
 
-  // PRIORITY 3: Randomize mode - Game only ends when host presses "Finish Game"
-  // This function is called during voting, but in Randomize mode, the game continues
-  // until the host explicitly ends it. The actual win determination happens in
-  // the VoteResultsScreen when host clicks "Finish Game"
+  // PRIORITY 3: Randomize mode - Check auto-end conditions but don't declare winners yet
+  // The game continues until host explicitly ends it, but we need to check if it should auto-end
   if (isRandomizeMode) {
-    console.log('Randomize mode: Game continues until host ends it');
-    return { winners: [] }; // No automatic win condition
+    console.log('=== RANDOMIZE MODE AUTO-END CHECK ===');
+    
+    // Check if too few players remain (≤2 players) - game should auto-end
+    if (activePlayers.length <= 2) {
+      console.log('✅ RANDOMIZE AUTO-END: Too few players remaining (≤2)');
+      // In randomize mode, if ≤2 players remain, impostors win
+      const allImpostorPlayers = players.filter(p => playerRoles[p.id] === 'impostor');
+      return {
+        winners: allImpostorPlayers,
+        winnerType: 'impostor'
+      };
+    }
+    
+    // Check if all impostors are eliminated - game should auto-end
+    if (activeImpostors.length === 0) {
+      console.log('✅ RANDOMIZE AUTO-END: All impostors eliminated');
+      return {
+        winners: activeInnocents,
+        winnerType: 'innocent'
+      };
+    }
+    
+    // Check if jester was eliminated (shouldn't happen in randomize mode, but just in case)
+    const eliminatedJester = eliminatedPlayerIds.find(
+      playerId => playerRoles[playerId] === 'jester'
+    );
+    
+    if (eliminatedJester) {
+      const jesterPlayer = players.find(p => p.id === eliminatedJester);
+      console.log('✅ RANDOMIZE AUTO-END: Jester was eliminated');
+      return {
+        winners: jesterPlayer ? [jesterPlayer] : [],
+        winnerType: 'jester'
+      };
+    }
+    
+    console.log('Randomize mode: Game continues, no auto-end condition met');
+    return { winners: [] }; // No automatic win condition, game continues
   }
 
   // PRIORITY 4: Check if too few players remain - impostors win
@@ -587,46 +626,3 @@ export function determineWinner(
   return checkWinConditions(gameState, players, eliminatedPlayerIds);
 }
 
-/**
- * Determines the winner when host finishes the game in Randomize mode
- * This is called when the host presses "Finish Game" button
- */
-export function determineRandomizeWinner(
-  gameState: GameState,
-  players: Player[]
-): { winners: Player[]; winnerType?: WinnerType } {
-  console.log('=== RANDOMIZE MODE FINAL WINNER DETERMINATION ===');
-  
-  const { playerRoles, eliminatedPlayers } = gameState;
-  
-  // Find all players for each team
-  const allImpostorPlayers = players.filter(p => playerRoles[p.id] === 'impostor');
-  const allInnocentPlayers = players.filter(p => playerRoles[p.id] === 'innocent');
-
-  // Find active (not eliminated) impostors
-  const activeImpostors = allImpostorPlayers.filter(p => !eliminatedPlayers.includes(p.id));
-
-  console.log('Final state for winner determination:', {
-    totalPlayers: players.length,
-    eliminatedPlayerIds: eliminatedPlayers,
-    playerRoles,
-    activeImpostorCount: activeImpostors.length,
-    allImpostorIds: allImpostorPlayers.map(p => p.id)
-  });
-
-  // If any impostor is still alive when the host ends the game, the impostor team wins.
-  if (activeImpostors.length > 0) {
-    console.log('✅ IMPOSTOR WIN: Impostors were still alive when host finished game.');
-    return {
-      winners: allImpostorPlayers, // The whole team wins
-      winnerType: 'impostor'
-    };
-  } else {
-    // If all impostors are eliminated, the innocent team wins.
-    console.log('✅ INNOCENT WIN: All impostors were eliminated when host finished game.');
-    return {
-      winners: allInnocentPlayers,
-      winnerType: 'innocent'
-    };
-  }
-}

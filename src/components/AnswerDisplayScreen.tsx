@@ -130,13 +130,20 @@ const AnswerDisplayScreen: React.FC<AnswerDisplayScreenProps> = ({
   useEffect(() => {
     if (!votingStarted) return;
 
-    const activePlayers = gameState.players.filter(p => !p.isEliminated);
+    let activePlayers = gameState.players.filter(p => !p.isEliminated);
+    
+    // If in tie-breaker mode, only allow voting for tied players
+    if (gameState.isTieVote && gameState.tiedPlayers && gameState.tiedPlayers.length > 0) {
+      activePlayers = activePlayers.filter(p => gameState.tiedPlayers!.includes(p.id));
+      console.log('AnswerDisplay Tie-breaker: Bots can only vote for tied players:', activePlayers.map(p => p.username));
+    }
 
     // Only vote for bots that haven't voted yet
-    const bots = activePlayers.filter(player => 
+    const bots = gameState.players.filter(player => 
       (player.isBot || player.username.startsWith('Bot_')) && 
       !gameState.votes[player.id] &&
-      (gameState.selectedPackType !== 'custom' || player.role !== 'spectator')
+      (gameState.selectedPackType !== 'custom' || player.role !== 'spectator') &&
+      !player.isEliminated
     );
     
     if (bots.length === 0) return;

@@ -1,4 +1,4 @@
-import { Player, GameState, PlayerRole, WinnerType } from '../types';
+import { Player, GameState, WinnerType } from '../types';
 
 /**
  * Words Game Voting Logic
@@ -138,8 +138,9 @@ export function processWordsGameVotes(
     const totalNeeded = gameState.impostorCount;
     const remainingToEliminate = totalNeeded - alreadyEliminatedCount;
 
-    // If we don't have enough players to eliminate, or no one voted, end the round.
-    if (sortedTiedPlayers.length < remainingToEliminate || sortedTiedPlayers.length === 0 || remainingToEliminate <= 0) {
+    // If no one voted, end the round.
+    // Note: Continue tie-breaking until no ties remain, regardless of elimination count
+    if (sortedTiedPlayers.length === 0) {
       const playersToEliminate = sortedTiedPlayers.slice(0, remainingToEliminate).map(([id]) => id);
       const newEliminatedPlayers = [...gameState.eliminatedPlayers, ...playersToEliminate];
       
@@ -162,32 +163,28 @@ export function processWordsGameVotes(
       };
     }
     
-    // Check for a tie at the elimination boundary
-    const eliminationVoteCount = sortedTiedPlayers[remainingToEliminate - 1][1];
-    const potentialTie = sortedTiedPlayers[remainingToEliminate]?.[1] === eliminationVoteCount;
-
-    if (potentialTie) {
+    // Check if there's a tie at the top (highest vote count)
+    const highestVoteCount = sortedTiedPlayers[0][1];
+    const playersWithHighestVotes = sortedTiedPlayers.filter(([, votes]) => votes === highestVoteCount);
+    
+    // If there's still a tie at the highest vote count, continue tie-breaking
+    if (playersWithHighestVotes.length > 1) {
       console.log('Another tie detected in tie-breaker round for words game.');
       
-      const playersToEliminate = sortedTiedPlayers
-        .filter(([, votes]) => votes > eliminationVoteCount)
-        .map(([id]) => id);
-
-      const playersInNewTie = sortedTiedPlayers
-        .filter(([, votes]) => votes === eliminationVoteCount)
-        .map(([id]) => id);
+      // Store the current tie-breaker votes before starting the next tie-breaker round
+      const newTieBreakerVotes = [...(gameState.tieBreakerVotes || []), votes];
       
       return {
         ...gameState,
         isTieVote: true,
-        tiedPlayers: playersInNewTie,
-        eliminatedPlayers: [...gameState.eliminatedPlayers, ...playersToEliminate],
+        tiedPlayers: playersWithHighestVotes.map(([id]) => id),
         votes: {}, // Clear votes for the next round
-        tieBreakerVotes: [...(gameState.tieBreakerVotes || []), votes],
+        tieBreakerVotes: newTieBreakerVotes, // Store current tie-breaker votes
       };
     }
 
-    const playersToEliminate = sortedTiedPlayers.slice(0, remainingToEliminate).map(([id]) => id);
+    // No more ties - eliminate the player(s) with highest votes
+    const playersToEliminate = playersWithHighestVotes.map(([id]) => id);
     const newEliminatedPlayers = [...gameState.eliminatedPlayers, ...playersToEliminate];
     
     const { winners, winnerType } = checkWordsGameWinConditions(
@@ -367,7 +364,7 @@ export function processWordsGameVotes(
 
          const result = {
            ...gameState,
-           phase: 'voteResults',
+           phase: 'voteResults' as const,
            votes: votes,
            originalVotes: votes, // Store original votes for vote breakdown
            eliminatedPlayers: [...gameState.eliminatedPlayers, ...eliminatedPlayerIds],
@@ -580,7 +577,7 @@ export function generateWordsGameBotVotes(
         } else {
           // In normal voting, try to identify impostors
           // Use a combination of random selection and strategic thinking
-          const suspiciousPlayers = eligiblePlayers.filter(p => {
+          const suspiciousPlayers = eligiblePlayers.filter(() => {
             // Simple heuristic: players with certain characteristics might be impostors
             // In a real game, this would be based on actual game behavior
             return Math.random() < 0.4; // 40% chance of being "suspicious"

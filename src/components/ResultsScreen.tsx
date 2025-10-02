@@ -14,7 +14,17 @@ export default function ResultsScreen({
   onBackToHome,
   language
 }: ResultsScreenProps) {
-  const { winners, winnerType, players: allPlayers, playerRoles } = gameState;
+  const { winners, winnerType, players: allPlayers, playerRoles, originalPlayerRoles, eliminatedPlayers } = gameState;
+  
+  // Use original roles for eliminated players, current roles for active players
+  const displayRoles = { ...playerRoles };
+  if (originalPlayerRoles && eliminatedPlayers) {
+    eliminatedPlayers.forEach(playerId => {
+      if (originalPlayerRoles[playerId]) {
+        displayRoles[playerId] = originalPlayerRoles[playerId];
+      }
+    });
+  }
   
   console.log('ResultsScreen - Game State:', {
     winners: winners?.length || 0,
@@ -320,8 +330,8 @@ export default function ResultsScreen({
                     <h3 className={`text-sm font-bold text-white mb-2 truncate ${isEliminated ? 'line-through text-gray-400' : ''}`}>
                       {player.username}
                     </h3>
-                    <span className={`px-3 py-1 rounded-full text-xs font-medium border ${getRoleColor(playerRoles[player.id])}`}>
-                      {getRoleText(playerRoles[player.id])}
+                    <span className={`px-3 py-1 rounded-full text-xs font-medium border ${getRoleColor(displayRoles[player.id])}`}>
+                      {getRoleText(displayRoles[player.id])}
                     </span>
                   </div>
                 </div>

@@ -113,6 +113,8 @@ export interface GameState {
   winners: Player[];
   winnerType?: WinnerType;
   playerRoles: Record<string, PlayerRole>;
+  originalPlayerRoles?: Record<string, PlayerRole>; // Store original roles before eliminations
+  continueCount?: number; // Track how many times host has continued the game (max 3 for randomize mode)
   selectedPack: string | null; // Track selected content pack
   startingPlayer?: Player | null; // Track starting player for Word Game
   turnOrder: Player[]; // Track turn order for Word Game

@@ -156,8 +156,14 @@ export default function VotingScreen({
         return;
       }
 
-      // The list of players a bot can vote FOR is also the active (non-eliminated) players.
-      const targetablePlayers = gameState.players.filter(p => !p.isEliminated);
+      // The list of players a bot can vote FOR - filter based on tie-breaker status
+      let targetablePlayers = gameState.players.filter(p => !p.isEliminated);
+      
+      // If in tie-breaker mode, only allow voting for tied players
+      if (gameState.isTieVote && gameState.tiedPlayers && gameState.tiedPlayers.length > 0) {
+        targetablePlayers = targetablePlayers.filter(p => gameState.tiedPlayers!.includes(p.id));
+        console.log('Tie-breaker mode: Bots can only vote for tied players:', targetablePlayers.map(p => p.username));
+      }
 
       // Use words game bot voting for words game mode
       const botVotes = gameState.gameMode === 'words' 
@@ -178,6 +184,7 @@ export default function VotingScreen({
           );
 
       console.log(`VotingScreen: Bot ${bot.username} (${bot.id}) generated votes:`, botVotes);
+      console.log(`Available targets for bot:`, targetablePlayers.map(p => p.username));
 
       // If no votes were generated (empty array), force the bot to vote for someone
       let finalVotes = botVotes;
