@@ -212,6 +212,7 @@ export function updateGameStateAfterRandomizeElimination(
   allVotes: Record<string, string[]>,
   wasTieBreakerRound: boolean
 ): Partial<GameState> {
+  console.log('DEBUG: updateGameStateAfterRandomizeElimination called with isRandomizeMode =', gameState.isRandomizeMode);
   const newEliminatedPlayers = [...gameState.eliminatedPlayers, ...eliminatedPlayerIds];
   
   // Convert eliminated players to spectators and update player objects

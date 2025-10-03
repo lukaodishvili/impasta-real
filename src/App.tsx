@@ -206,6 +206,7 @@ const processVotingResults = (
   }
 
   // RANDOMIZE MODE - Use separated logic
+  console.log('DEBUG: gameState.isRandomizeMode =', gameState.isRandomizeMode);
   if (gameState.isRandomizeMode) {
     console.log('=== PROCESSING RANDOMIZE MODE VOTES ===');
     console.log('Current game state:', {
