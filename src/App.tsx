@@ -131,8 +131,8 @@ const processVotingResults = (
       return;
     }
 
-    // No more ties - eliminate the player(s) with highest votes
-    const playersToEliminate = playersWithHighestVotes.map(([id]) => id);
+    // No more ties - eliminate the top (M-K) players from the tied group
+    const playersToEliminate = sortedTiedPlayers.slice(0, remainingToEliminate).map(([id]) => id);
     const newEliminatedPlayers = [...gameState.eliminatedPlayers, ...playersToEliminate];
     // Update the isEliminated flag on the player objects themselves
     const updatedPlayers = gameState.players.map(p => 
