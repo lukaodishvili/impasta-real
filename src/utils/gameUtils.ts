@@ -18,13 +18,11 @@ export function assignRoles(
   const assignments = new Map<string, PlayerRole>();
   let jesterCluePlayerIds: string[] = [];
 
-  // 1. In randomize mode, preserve spectators (eliminated players). In standard mode, all players get roles.
-  const playingPlayers = isRandomizeMode 
-    ? players.filter(p => p.role !== 'spectator')
-    : players;
-  const spectatorPlayers = isRandomizeMode 
-    ? players.filter(p => p.role === 'spectator')
-    : [];
+  // 1. Preserve spectators in both randomize mode and custom packs (standard mode)
+  // In randomize mode: preserve spectators (eliminated players)
+  // In standard mode: preserve spectators only for custom packs (host spectators)
+  const playingPlayers = players.filter(p => p.role !== 'spectator');
+  const spectatorPlayers = players.filter(p => p.role === 'spectator');
   
   spectatorPlayers.forEach(p => assignments.set(p.id, 'spectator'));
 
