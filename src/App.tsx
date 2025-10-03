@@ -206,7 +206,6 @@ const processVotingResults = (
   }
 
   // RANDOMIZE MODE - Use separated logic
-  console.log('DEBUG: gameState.isRandomizeMode =', gameState.isRandomizeMode);
   if (gameState.isRandomizeMode) {
     console.log('=== PROCESSING RANDOMIZE MODE VOTES ===');
     console.log('Current game state:', {
@@ -1064,9 +1063,18 @@ function App() {
         return;
       } else {
         // First time playing, stay in lobby with same players but reset game settings
-        setGameState(prev => ({
-          ...prev,
-          phase: 'lobby',
+        setGameState(prev => {
+          // Reset isEliminated status and roles for all players
+          const resetPlayers = prev.players.map(p => ({ 
+            ...p, 
+            isEliminated: false,
+            role: undefined // Reset role to undefined so it gets reassigned in new game
+          }));
+
+          return {
+            ...prev,
+            players: resetPlayers,
+            phase: 'lobby',
           currentRound: 1,
           eliminatedPlayers: [],
           winners: [],
@@ -1088,7 +1096,8 @@ function App() {
           isRandomizeMode: false,
           // Keep custom content and players
           currentImpostorWord: '' // Clear previous game's custom word
-        }));
+          };
+        });
         setCurrentScreen('lobby');
         return;
       }
@@ -1096,8 +1105,12 @@ function App() {
       
     // For regular packs, go back to lobby with same pack and reset settings
     setGameState(prev => {
-      // Reset isEliminated status for all players
-      const resetPlayers = prev.players.map(p => ({ ...p, isEliminated: false }));
+      // Reset isEliminated status and roles for all players
+      const resetPlayers = prev.players.map(p => ({ 
+        ...p, 
+        isEliminated: false,
+        role: undefined // Reset role to undefined so it gets reassigned in new game
+      }));
 
       return {
         ...prev,
