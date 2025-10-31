@@ -84,4 +84,7 @@ jspm_packages/
 .dynamodb/
 
 # TernJS port file
-.tern-port*.pkg
+.tern-port
+
+# Installer packages
+*.pkg
